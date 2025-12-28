@@ -1,13 +1,11 @@
 /**
  * IRIS Backend - Gemini AI Service
- * Handles communication with Google Gemini for intelligent responses
- * Using @google/genai SDK (v1.0+)
+ * Uses direct REST API for maximum compatibility
  */
 
-import { GoogleGenAI } from '@google/genai';
 import { extractCommandFromText, SUPPORTED_COMMANDS_LIST } from '../utils/commandParser.js';
 
-let genAI = null;
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
 
 // IRIS System Instruction
 const IRIS_SYSTEM_INSTRUCTION = `You are IRIS, an intelligent personal assistant. You're like J.A.R.V.I.S from Iron Man - smart, polite, and technical.
@@ -35,9 +33,6 @@ ${SUPPORTED_COMMANDS_LIST}
 User: "Open the browser"
 {"action": "EXECUTE", "command": "OPEN_BROWSER", "params": {}, "reply": "Opening the browser for you."}
 
-User: "Search for weather"
-{"action": "EXECUTE", "command": "SEARCH_WEB", "params": {"query": "weather"}, "reply": "Searching now."}
-
 User: "How are you?"
 I'm doing well, thank you for asking! How can I help you?
 
@@ -49,23 +44,19 @@ I'm IRIS, your intelligent personal assistant. How may I assist you?
 - If you don't understand, ask for clarification
 - Always be helpful and polite`;
 
+let apiKey = null;
+
 /**
- * Initialize Gemini AI client
+ * Initialize Gemini AI
  */
 export function initGemini() {
     if (!process.env.GEMINI_API_KEY) {
         console.error('❌ GEMINI_API_KEY not set');
         return false;
     }
-
-    try {
-        genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-        console.log('✅ Gemini AI initialized (@google/genai)');
-        return true;
-    } catch (error) {
-        console.error('❌ Gemini initialization error:', error.message);
-        return false;
-    }
+    apiKey = process.env.GEMINI_API_KEY;
+    console.log('✅ Gemini AI initialized (REST API)');
+    return true;
 }
 
 /**
@@ -79,11 +70,10 @@ function formatHistory(history) {
 }
 
 /**
- * Process a user message and get AI response
+ * Process a user message and get AI response using REST API
  */
 export async function processMessage(userMessage, history = []) {
-    if (!genAI) {
-        console.log('⚠️ AI not initialized, trying to reinitialize...');
+    if (!apiKey) {
         if (!initGemini()) {
             return {
                 action: null,
@@ -94,52 +84,45 @@ export async function processMessage(userMessage, history = []) {
     }
 
     try {
-        // Build contents array with history and current message
+        // Build contents array
         const contents = [
+            // Add system instruction as first user message
+            { role: 'user', parts: [{ text: `System: ${IRIS_SYSTEM_INSTRUCTION}` }] },
+            { role: 'model', parts: [{ text: 'Understood. I am IRIS, ready to assist.' }] },
             ...formatHistory(history),
             { role: 'user', parts: [{ text: userMessage }] }
         ];
 
-        // Call Gemini API using @google/genai SDK
-        // Try gemini-2.0-flash first, fallback to gemini-1.5-flash
-        let response;
-        try {
-            response = await genAI.models.generateContent({
-                model: 'models/gemini-2.0-flash',
+        // Call Gemini REST API
+        const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
                 contents: contents,
-                config: {
-                    systemInstruction: IRIS_SYSTEM_INSTRUCTION,
+                generationConfig: {
                     maxOutputTokens: 500,
                     temperature: 0.7
                 }
-            });
-        } catch (e) {
-            console.log('⚠️ gemini-2.0-flash failed, trying gemini-1.5-flash-002');
-            response = await genAI.models.generateContent({
-                model: 'models/gemini-1.5-flash-002',
-                contents: contents,
-                config: {
-                    systemInstruction: IRIS_SYSTEM_INSTRUCTION
-                }
-            });
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.text();
+            console.error('Gemini API error:', error);
+            throw new Error(`API error: ${response.status}`);
         }
 
-        // Extract text from response
-        const responseText = response.text?.trim() ||
-            response.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
-            'I understood your message.';
+        const data = await response.json();
+        const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'I understood.';
 
         console.log('📝 Gemini response:', responseText.substring(0, 100));
 
-        // Try to parse as JSON command
+        // Parse response
         const parsed = parseResponse(responseText);
 
-        // If not a valid command, try to extract [ACTION:] pattern
         if (!parsed.action) {
             const extracted = extractCommandFromText(responseText);
-            if (extracted) {
-                return extracted;
-            }
+            if (extracted) return extracted;
         }
 
         return parsed;
@@ -165,7 +148,7 @@ function parseResponse(responseText) {
         jsonText = codeBlockMatch[1].trim();
     }
 
-    // Check if response is JSON (command)
+    // Check if response is JSON
     if (jsonText.startsWith('{') && jsonText.endsWith('}')) {
         try {
             const parsed = JSON.parse(jsonText);
@@ -177,12 +160,9 @@ function parseResponse(responseText) {
                     reply: parsed.reply || 'Done'
                 };
             }
-        } catch (e) {
-            // Not valid JSON, treat as regular response
-        }
+        } catch (e) { }
     }
 
-    // Regular text response
     return {
         action: null,
         command: null,
@@ -200,9 +180,7 @@ export function isLikelyCommand(message) {
         'open', 'run', 'close', 'search', 'type', 'delete', 'launch',
         'start', 'play', 'pause', 'stop', 'shutdown', 'restart', 'lock'
     ];
-
-    const lowerMessage = message.toLowerCase();
-    return commandKeywords.some(keyword => lowerMessage.includes(keyword));
+    return commandKeywords.some(k => message.toLowerCase().includes(k));
 }
 
 export { SUPPORTED_COMMANDS_LIST };
