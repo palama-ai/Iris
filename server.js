@@ -22,6 +22,7 @@ import {
 } from './services/elevenLabsService.js';
 import { initDatabase, setupTables, getOrCreateSession, saveMessage, getHistory, clearHistory } from './config/database.js';
 import { validateCommand, createDesktopPayload, parseNaturalCommand } from './utils/commandParser.js';
+import { logCommand, logEvent, getRecentLogs } from './utils/logger.js';
 
 // Configuration
 const PORT = process.env.PORT || 3000;
@@ -161,6 +162,54 @@ app.get('/', (req, res) => {
     });
 });
 
+// Status endpoint - detailed server status
+app.get('/status', (req, res) => {
+    const uptime = process.uptime();
+    const hours = Math.floor(uptime / 3600);
+    const minutes = Math.floor((uptime % 3600) / 60);
+    const seconds = Math.floor(uptime % 60);
+
+    res.json({
+        server: {
+            name: 'IRIS Backend Server',
+            version: '1.2.0',
+            status: 'online',
+            uptime: `${hours}h ${minutes}m ${seconds}s`,
+            uptimeSeconds: Math.floor(uptime)
+        },
+        connections: {
+            desktop_agent: {
+                connected: isDesktopConnected(),
+                count: connectedDevices.desktop.size,
+                socketIds: Array.from(connectedDevices.desktop)
+            },
+            mobile: {
+                connected: connectedDevices.mobile.size > 0,
+                count: connectedDevices.mobile.size,
+                socketIds: Array.from(connectedDevices.mobile)
+            }
+        },
+        services: {
+            gemini: {
+                configured: !!process.env.GEMINI_API_KEY,
+                status: !!process.env.GEMINI_API_KEY ? 'ready' : 'not_configured'
+            },
+            elevenLabs: {
+                configured: isElevenLabsConfigured(),
+                status: isElevenLabsConfigured() ? 'ready' : 'not_configured'
+            },
+            database: {
+                configured: !!process.env.DATABASE_URL,
+                status: !!process.env.DATABASE_URL ? 'connected' : 'not_configured'
+            }
+        },
+        security: {
+            authEnabled: !!AUTH_TOKEN
+        },
+        recentLogs: getRecentLogs(10)
+    });
+});
+
 // Get ElevenLabs signed URL for client
 app.get('/api/voice/signed-url', async (req, res) => {
     const result = await getSignedUrl();
@@ -292,6 +341,9 @@ io.on('connection', (socket) => {
                     const payload = createDesktopPayload(response);
                     io.to('desktop_room').emit('command:execute', payload);
                     console.log(`⚡ Command sent to desktop: ${response.command}`);
+
+                    // Log command to file
+                    logCommand(response.command, response.params, deviceType, sessionId);
                 } else {
                     console.warn(`⚠️  Invalid command: ${validation.error}`);
                 }
