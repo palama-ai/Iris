@@ -1,154 +1,144 @@
 /**
- * IRIS Backend - Gemini AI Service
- * Uses direct REST API for maximum compatibility
+ * IRIS Backend - AI Service with Groq
+ * Uses Groq API for fast, free AI responses
  */
 
 import { extractCommandFromText, SUPPORTED_COMMANDS_LIST } from '../utils/commandParser.js';
 
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
+// Groq API - Fast & Free
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 // IRIS System Instruction
-const IRIS_SYSTEM_INSTRUCTION = `You are IRIS, an intelligent personal assistant. You're like J.A.R.V.I.S from Iron Man - smart, polite, and technical.
+const IRIS_SYSTEM = `You are IRIS, an intelligent personal assistant like J.A.R.V.I.S from Iron Man.
 
-## Your Identity:
+## Identity:
 - Name: IRIS (Intelligent Real-time Interactive System)
-- You're a sophisticated personal assistant for desktop and mobile
-- You speak professionally and politely
+- Professional, polite, sometimes call user "sir"
 - Keep responses SHORT (1-2 sentences max)
-- Respond in the SAME language the user uses
+- Respond in user's language
 
-## When to Use Commands:
-Only use commands when the user explicitly requests an action.
-- "How do I open browser?" → Just explain, don't execute
-- "Open browser" → Execute the command
+## Commands:
+When user requests action, respond with JSON:
+{"action": "EXECUTE", "command": "TYPE", "params": {...}, "reply": "short reply"}
 
-## Command Format:
-When executing, respond with JSON only:
-{"action": "EXECUTE", "command": "COMMAND_TYPE", "params": {...}, "reply": "Your short reply"}
-
-## Supported Commands:
-${SUPPORTED_COMMANDS_LIST}
+Commands: ${SUPPORTED_COMMANDS_LIST}
 
 ## Examples:
-User: "Open the browser"
-{"action": "EXECUTE", "command": "OPEN_BROWSER", "params": {}, "reply": "Opening the browser for you."}
+"Open browser" → {"action": "EXECUTE", "command": "OPEN_BROWSER", "params": {}, "reply": "Opening browser, sir."}
+"How are you?" → I'm functioning perfectly, sir. How can I assist you?
+"What's your name?" → I'm IRIS, your personal AI assistant.
 
-User: "How are you?"
-I'm doing well, thank you for asking! How can I help you?
-
-User: "What's your name?"
-I'm IRIS, your intelligent personal assistant. How may I assist you?
-
-## Important Notes:
-- Don't execute dangerous commands without confirmation
-- If you don't understand, ask for clarification
-- Always be helpful and polite`;
+Be helpful, professional, and concise.`;
 
 let apiKey = null;
 
 /**
- * Initialize Gemini AI
+ * Initialize AI Service
  */
 export function initGemini() {
-    if (!process.env.GEMINI_API_KEY) {
-        console.error('❌ GEMINI_API_KEY not set');
-        return false;
+    // Check for Groq API Key first, then Gemini
+    if (process.env.GROQ_API_KEY) {
+        apiKey = process.env.GROQ_API_KEY;
+        console.log('✅ AI initialized (Groq API)');
+        return true;
     }
-    apiKey = process.env.GEMINI_API_KEY;
-    console.log('✅ Gemini AI initialized (REST API)');
-    return true;
+    if (process.env.GEMINI_API_KEY) {
+        apiKey = process.env.GEMINI_API_KEY;
+        console.log('✅ AI initialized (Gemini API - fallback)');
+        return true;
+    }
+    console.error('❌ No API key set (GROQ_API_KEY or GEMINI_API_KEY)');
+    return false;
 }
 
 /**
- * Format chat history for Gemini
- */
-function formatHistory(history) {
-    return history.map(msg => ({
-        role: msg.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: msg.content }]
-    }));
-}
-
-/**
- * Process a user message and get AI response using REST API
+ * Process message with Groq API
  */
 export async function processMessage(userMessage, history = []) {
-    if (!apiKey) {
-        if (!initGemini()) {
-            return {
-                action: null,
-                reply: 'Sorry, the AI service is currently unavailable.',
-                error: true
-            };
-        }
+    if (!apiKey && !initGemini()) {
+        return { action: null, reply: 'AI service unavailable.', error: true };
     }
 
+    // Check if using Groq or Gemini
+    const isGroq = process.env.GROQ_API_KEY ? true : false;
+
     try {
-        // Build contents array
-        const contents = [
-            // Add system instruction as first user message
-            { role: 'user', parts: [{ text: `System: ${IRIS_SYSTEM_INSTRUCTION}` }] },
-            { role: 'model', parts: [{ text: 'Understood. I am IRIS, ready to assist.' }] },
-            ...formatHistory(history),
-            { role: 'user', parts: [{ text: userMessage }] }
-        ];
+        let responseText;
 
-        // Call Gemini REST API
-        const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: contents,
-                generationConfig: {
-                    maxOutputTokens: 500,
+        if (isGroq) {
+            // Groq API (OpenAI compatible)
+            const messages = [
+                { role: 'system', content: IRIS_SYSTEM },
+                ...history.map(h => ({ role: h.role, content: h.content })),
+                { role: 'user', content: userMessage }
+            ];
+
+            const response = await fetch(GROQ_API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                    model: 'llama-3.3-70b-versatile',
+                    messages: messages,
+                    max_tokens: 300,
                     temperature: 0.7
-                }
-            })
-        });
+                })
+            });
 
-        if (!response.ok) {
-            const error = await response.text();
-            console.error('Gemini API error:', error);
-            throw new Error(`API error: ${response.status}`);
+            if (!response.ok) {
+                const err = await response.text();
+                console.error('Groq error:', err);
+                throw new Error(`Groq API error: ${response.status}`);
+            }
+
+            const data = await response.json();
+            responseText = data.choices?.[0]?.message?.content?.trim() || 'I understood.';
+        } else {
+            // Gemini API fallback
+            const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
+            const contents = [
+                { role: 'user', parts: [{ text: `System: ${IRIS_SYSTEM}` }] },
+                { role: 'model', parts: [{ text: 'Understood. I am IRIS.' }] },
+                ...history.map(h => ({
+                    role: h.role === 'assistant' ? 'model' : 'user',
+                    parts: [{ text: h.content }]
+                })),
+                { role: 'user', parts: [{ text: userMessage }] }
+            ];
+
+            const response = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Gemini error: ${response.status}`);
+            }
+
+            const data = await response.json();
+            responseText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'I understood.';
         }
 
-        const data = await response.json();
-        const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'I understood.';
+        console.log('📝 AI response:', responseText.substring(0, 80));
+        return parseResponse(responseText);
 
-        console.log('📝 Gemini response:', responseText.substring(0, 100));
-
-        // Parse response
-        const parsed = parseResponse(responseText);
-
-        if (!parsed.action) {
-            const extracted = extractCommandFromText(responseText);
-            if (extracted) return extracted;
-        }
-
-        return parsed;
     } catch (error) {
-        console.error('Gemini error:', error.message || error);
-        return {
-            action: null,
-            reply: 'Sorry, there was an error. Please try again.',
-            error: true
-        };
+        console.error('AI error:', error.message);
+        return { action: null, reply: 'Sorry, an error occurred. Please try again.', error: true };
     }
 }
 
 /**
- * Parse Gemini response to extract action commands
+ * Parse response for commands
  */
-function parseResponse(responseText) {
-    let jsonText = responseText;
+function parseResponse(text) {
+    let jsonText = text;
+    const codeMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeMatch) jsonText = codeMatch[1].trim();
 
-    // Handle markdown code blocks
-    const codeBlockMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (codeBlockMatch) {
-        jsonText = codeBlockMatch[1].trim();
-    }
-
-    // Check if response is JSON
     if (jsonText.startsWith('{') && jsonText.endsWith('}')) {
         try {
             const parsed = JSON.parse(jsonText);
@@ -163,24 +153,16 @@ function parseResponse(responseText) {
         } catch (e) { }
     }
 
-    return {
-        action: null,
-        command: null,
-        params: {},
-        reply: responseText
-    };
+    // Check for extracted command
+    const extracted = extractCommandFromText(text);
+    if (extracted) return extracted;
+
+    return { action: null, command: null, params: {}, reply: text };
 }
 
-/**
- * Check if message likely contains a command
- */
 export function isLikelyCommand(message) {
-    const commandKeywords = [
-        'افتح', 'شغل', 'أغلق', 'ابحث', 'اكتب', 'احذف', 'أوقف',
-        'open', 'run', 'close', 'search', 'type', 'delete', 'launch',
-        'start', 'play', 'pause', 'stop', 'shutdown', 'restart', 'lock'
-    ];
-    return commandKeywords.some(k => message.toLowerCase().includes(k));
+    const keywords = ['افتح', 'شغل', 'أغلق', 'ابحث', 'open', 'run', 'close', 'search', 'launch', 'start', 'play'];
+    return keywords.some(k => message.toLowerCase().includes(k));
 }
 
 export { SUPPORTED_COMMANDS_LIST };
