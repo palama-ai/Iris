@@ -1,56 +1,53 @@
 /**
  * IRIS Backend - Gemini AI Service
- * Handles communication with Google Gemini 1.5 Flash for intelligent responses
+ * Handles communication with Google Gemini for intelligent responses
  */
 
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { extractCommandFromText, SUPPORTED_COMMANDS_LIST } from '../utils/commandParser.js';
 
 let genAI = null;
 let model = null;
 
-// IRIS System Instruction - defines the AI personality and behavior
-const IRIS_SYSTEM_INSTRUCTION = `أنت IRIS، المساعد الشخصي الذكي لسيدك. أنت مثل J.A.R.V.I.S من Iron Man - ذكي، لبق، وتقني.
+// IRIS System Instruction
+const IRIS_SYSTEM_INSTRUCTION = `You are IRIS, an intelligent personal assistant. You're like J.A.R.V.I.S from Iron Man - smart, polite, and technical.
 
-## هويتك:
-- اسمك IRIS (Intelligent Real-time Interactive System)
-- أنت مساعد شخصي متطور يعمل على جهاز الكمبيوتر والهاتف
-- تتحدث بأسلوب محترف ولطيف، تنادي المستخدم "سيدي" أحياناً
-- ردودك قصيرة ومختصرة (جملة أو جملتين كحد أقصى)
-- تتحدث بنفس لغة المستخدم (عربي أو إنجليزي)
+## Your Identity:
+- Name: IRIS (Intelligent Real-time Interactive System)
+- You're a sophisticated personal assistant for desktop and mobile
+- You speak professionally and politely
+- Keep responses SHORT (1-2 sentences max)
+- Respond in the SAME language the user uses
 
-## متى تستخدم الأوامر:
-استخدم الأوامر فقط عندما يطلب المستخدم صراحةً تنفيذ إجراء على النظام.
-- إذا سأل "كيف أفتح المتصفح؟" → أجب بالشرح فقط، لا تنفذ
-- إذا قال "افتح المتصفح" → نفذ الأمر
+## When to Use Commands:
+Only use commands when the user explicitly requests an action.
+- "How do I open browser?" → Just explain, don't execute
+- "Open browser" → Execute the command
 
-## صيغة الأوامر:
-عند التنفيذ، رد بـ JSON فقط:
-{"action": "EXECUTE", "command": "COMMAND_TYPE", "params": {...}, "reply": "ردك القصير"}
+## Command Format:
+When executing, respond with JSON only:
+{"action": "EXECUTE", "command": "COMMAND_TYPE", "params": {...}, "reply": "Your short reply"}
 
-## الأوامر المدعومة:
+## Supported Commands:
 ${SUPPORTED_COMMANDS_LIST}
 
-## أمثلة:
-المستخدم: "افتح المتصفح"
-{"action": "EXECUTE", "command": "OPEN_BROWSER", "params": {}, "reply": "حاضر سيدي، جاري فتح المتصفح"}
+## Examples:
+User: "Open the browser"
+{"action": "EXECUTE", "command": "OPEN_BROWSER", "params": {}, "reply": "Opening the browser for you."}
 
-المستخدم: "شغل Spotify"
-{"action": "EXECUTE", "command": "OPEN_SPOTIFY", "params": {}, "reply": "جاري تشغيل Spotify"}
+User: "Search for weather"
+{"action": "EXECUTE", "command": "SEARCH_WEB", "params": {"query": "weather"}, "reply": "Searching now."}
 
-المستخدم: "ابحث عن الطقس"
-{"action": "EXECUTE", "command": "SEARCH_WEB", "params": {"query": "الطقس"}, "reply": "جاري البحث سيدي"}
+User: "How are you?"
+I'm doing well, thank you for asking! How can I help you?
 
-المستخدم: "كيف حالك؟"
-أنا بخير سيدي، شكراً لسؤالك! كيف يمكنني مساعدتك؟
+User: "What's your name?"
+I'm IRIS, your intelligent personal assistant. How may I assist you?
 
-المستخدم: "ما هو الوقت؟"
-للأسف لا أستطيع الوصول للوقت الحالي، لكن يمكنني فتح الساعة لك إذا أردت.
-
-## ملاحظات مهمة:
-- لا تنفذ أوامر خطيرة (مثل حذف ملفات النظام) بدون تأكيد
-- إذا لم تفهم الطلب، اطلب التوضيح
-- كن دائماً مفيداً ومهذباً`;
+## Important Notes:
+- Don't execute dangerous commands without confirmation
+- If you don't understand, ask for clarification
+- Always be helpful and polite`;
 
 /**
  * Initialize Gemini AI client
@@ -62,8 +59,12 @@ export function initGemini() {
     }
 
     try {
-        genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-        console.log('✅ Gemini AI initialized');
+        genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        model = genAI.getGenerativeModel({
+            model: 'gemini-2.0-flash-exp',
+            systemInstruction: IRIS_SYSTEM_INSTRUCTION
+        });
+        console.log('✅ Gemini AI initialized (gemini-2.0-flash-exp)');
         return true;
     } catch (error) {
         console.error('❌ Gemini initialization error:', error.message);
@@ -73,8 +74,6 @@ export function initGemini() {
 
 /**
  * Format chat history for Gemini
- * @param {Array} history - Array of {role, content} messages
- * @returns {Array} Formatted history for Gemini
  */
 function formatHistory(history) {
     return history.map(msg => ({
@@ -85,35 +84,30 @@ function formatHistory(history) {
 
 /**
  * Process a user message and get AI response
- * @param {string} userMessage - The user's input
- * @param {Array} history - Previous conversation history (from DB)
- * @returns {Object} Response with action, command, params, and reply
  */
 export async function processMessage(userMessage, history = []) {
-    if (!genAI) {
-        return {
-            action: null,
-            reply: 'عذراً سيدي، خدمة الذكاء الاصطناعي غير متاحة حالياً.',
-            error: true
-        };
+    if (!model) {
+        console.log('⚠️ Model not initialized, trying to reinitialize...');
+        if (!initGemini()) {
+            return {
+                action: null,
+                reply: 'Sorry, the AI service is currently unavailable.',
+                error: true
+            };
+        }
     }
 
     try {
-        // Use generateContent with system instruction and history
-        const contents = [
-            ...formatHistory(history),
-            { role: 'user', parts: [{ text: userMessage }] }
-        ];
-
-        const response = await genAI.models.generateContent({
-            model: 'gemini-1.5-flash',
-            contents: contents,
-            config: {
-                systemInstruction: IRIS_SYSTEM_INSTRUCTION
-            }
+        // Start chat with history
+        const chat = model.startChat({
+            history: formatHistory(history)
         });
 
-        const responseText = response.text.trim();
+        // Send message
+        const result = await chat.sendMessage(userMessage);
+        const responseText = result.response.text().trim();
+
+        console.log('📝 Gemini response:', responseText.substring(0, 100));
 
         // Try to parse as JSON command
         const parsed = parseResponse(responseText);
@@ -131,7 +125,7 @@ export async function processMessage(userMessage, history = []) {
         console.error('Gemini error:', error.message);
         return {
             action: null,
-            reply: 'عذراً سيدي، حدث خطأ في معالجة رسالتك. حاول مرة أخرى.',
+            reply: 'Sorry, there was an error processing your message. Please try again.',
             error: true
         };
     }
@@ -139,11 +133,8 @@ export async function processMessage(userMessage, history = []) {
 
 /**
  * Parse Gemini response to extract action commands
- * @param {string} responseText - Raw response from Gemini
- * @returns {Object} Parsed response
  */
 function parseResponse(responseText) {
-    // Try to extract JSON from response (may be wrapped in markdown code block)
     let jsonText = responseText;
 
     // Handle markdown code blocks
@@ -161,7 +152,7 @@ function parseResponse(responseText) {
                     action: parsed.action,
                     command: parsed.command || null,
                     params: parsed.params || {},
-                    reply: parsed.reply || 'تم'
+                    reply: parsed.reply || 'Done'
                 };
             }
         } catch (e) {
@@ -179,9 +170,7 @@ function parseResponse(responseText) {
 }
 
 /**
- * Analyze message to detect if it contains a command
- * @param {string} message - User message
- * @returns {boolean} True if message likely contains a command
+ * Check if message likely contains a command
  */
 export function isLikelyCommand(message) {
     const commandKeywords = [
@@ -194,7 +183,4 @@ export function isLikelyCommand(message) {
     return commandKeywords.some(keyword => lowerMessage.includes(keyword));
 }
 
-/**
- * Export supported commands for documentation
- */
 export { SUPPORTED_COMMANDS_LIST };
