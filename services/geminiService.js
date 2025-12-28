@@ -1,13 +1,12 @@
 /**
  * IRIS Backend - Gemini AI Service
- * Handles communication with Google Gemini for intelligent responses
+ * Handles communication with Google Gemini 1.5 Flash for intelligent responses
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { extractCommandFromText, SUPPORTED_COMMANDS_LIST } from '../utils/commandParser.js';
 
-let genAI = null;
-let model = null;
+let ai = null;
 
 // IRIS System Instruction
 const IRIS_SYSTEM_INSTRUCTION = `You are IRIS, an intelligent personal assistant. You're like J.A.R.V.I.S from Iron Man - smart, polite, and technical.
@@ -59,12 +58,8 @@ export function initGemini() {
     }
 
     try {
-        genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        model = genAI.getGenerativeModel({
-            model: 'gemini-2.0-flash-exp',
-            systemInstruction: IRIS_SYSTEM_INSTRUCTION
-        });
-        console.log('✅ Gemini AI initialized (gemini-2.0-flash-exp)');
+        genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        console.log('✅ Gemini AI initialized');
         return true;
     } catch (error) {
         console.error('❌ Gemini initialization error:', error.message);
@@ -86,28 +81,30 @@ function formatHistory(history) {
  * Process a user message and get AI response
  */
 export async function processMessage(userMessage, history = []) {
-    if (!model) {
-        console.log('⚠️ Model not initialized, trying to reinitialize...');
-        if (!initGemini()) {
-            return {
-                action: null,
-                reply: 'Sorry, the AI service is currently unavailable.',
-                error: true
-            };
-        }
+    if (!genAI) {
+        return {
+            action: null,
+            reply: 'عذراً سيدي، خدمة الذكاء الاصطناعي غير متاحة حالياً.',
+            error: true
+        };
     }
 
     try {
-        // Start chat with history
-        const chat = model.startChat({
-            history: formatHistory(history)
+        // Use generateContent with system instruction and history
+        const contents = [
+            ...formatHistory(history),
+            { role: 'user', parts: [{ text: userMessage }] }
+        ];
+
+        const response = await genAI.models.generateContent({
+            model: 'gemini-1.5-flash',
+            contents: contents,
+            config: {
+                systemInstruction: IRIS_SYSTEM_INSTRUCTION
+            }
         });
 
-        // Send message
-        const result = await chat.sendMessage(userMessage);
-        const responseText = result.response.text().trim();
-
-        console.log('📝 Gemini response:', responseText.substring(0, 100));
+        const responseText = response.text.trim();
 
         // Try to parse as JSON command
         const parsed = parseResponse(responseText);
@@ -125,7 +122,7 @@ export async function processMessage(userMessage, history = []) {
         console.error('Gemini error:', error.message);
         return {
             action: null,
-            reply: 'Sorry, there was an error processing your message. Please try again.',
+            reply: 'عذراً سيدي، حدث خطأ في معالجة رسالتك. حاول مرة أخرى.',
             error: true
         };
     }
