@@ -12,7 +12,7 @@ import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
 
 // Services
-import { initGemini, processMessage } from './services/geminiService.js';
+import { initGemini, processMessage, scheduleTask as aiScheduleTask } from './services/geminiService.js';
 import {
     initElevenLabs,
     textToSpeechSimple,
@@ -20,6 +20,7 @@ import {
     getSignedUrl,
     isConfigured as isElevenLabsConfigured
 } from './services/elevenLabsService.js';
+import { initScheduler, scheduleTask, getPendingTasksCount } from './services/schedulerService.js';
 import { initDatabase, setupTables, getOrCreateSession, saveMessage, getHistory, clearHistory } from './config/database.js';
 import { validateCommand, createDesktopPayload, parseNaturalCommand } from './utils/commandParser.js';
 import { logCommand, logEvent, getRecentLogs } from './utils/logger.js';
@@ -349,6 +350,16 @@ io.on('connection', (socket) => {
                 }
             }
 
+            // Handle SCHEDULE action - schedule a reminder
+            if (response.action === 'SCHEDULE') {
+                const taskData = scheduleTask(sessionId, response.time, response.task);
+                if (taskData) {
+                    console.log(`📅 Reminder scheduled: "${response.task}"`);
+                } else {
+                    console.warn('⚠️ Failed to schedule task');
+                }
+            }
+
             // Send response back to client
             socket.emit('message:response', {
                 text: response.reply,
@@ -472,6 +483,9 @@ async function startServer() {
     if (initDatabase()) {
         await setupTables();
     }
+
+    // Initialize task scheduler
+    initScheduler(io);
 
     // Start listening
     httpServer.listen(PORT, () => {
