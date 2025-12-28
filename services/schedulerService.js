@@ -3,22 +3,22 @@
  * Checks for scheduled tasks and triggers reminders
  */
 
-import { io } from '../server.js';
-
 // Store scheduled tasks
-const scheduledTasks = new Map(); // taskId -> { sessionId, time, task, executed }
+const scheduledTasks = new Map();
 
 let checkInterval = null;
+let ioInstance = null;
 
 /**
  * Initialize the scheduler
  */
-export function initScheduler(ioInstance) {
+export function initScheduler(io) {
+    ioInstance = io;
     console.log('⏰ Task scheduler initialized');
 
     // Check for due tasks every 10 seconds
     checkInterval = setInterval(() => {
-        checkDueTasks(ioInstance);
+        checkDueTasks();
     }, 10000);
 
     return true;
@@ -43,11 +43,9 @@ export function scheduleTask(sessionId, timeStr, task) {
     // Parse time - support multiple formats
     let scheduledTime;
 
-    // Try ISO format first
-    if (timeStr.includes('T')) {
+    if (timeStr && timeStr.includes('T')) {
         scheduledTime = new Date(timeStr);
     } else {
-        // Try to parse natural time like "5pm", "17:00", etc.
         scheduledTime = parseNaturalTime(timeStr);
     }
 
@@ -75,6 +73,8 @@ export function scheduleTask(sessionId, timeStr, task) {
  * Parse natural time strings
  */
 function parseNaturalTime(timeStr) {
+    if (!timeStr) return null;
+
     const now = new Date();
     const lowerTime = timeStr.toLowerCase().trim();
 
@@ -92,7 +92,6 @@ function parseNaturalTime(timeStr) {
         const scheduled = new Date(now);
         scheduled.setHours(hours, minutes, 0, 0);
 
-        // If time has passed today, schedule for tomorrow
         if (scheduled <= now) {
             scheduled.setDate(scheduled.getDate() + 1);
         }
@@ -120,7 +119,9 @@ function parseNaturalTime(timeStr) {
 /**
  * Check for tasks that are due
  */
-function checkDueTasks(ioInstance) {
+function checkDueTasks() {
+    if (!ioInstance) return;
+
     const now = new Date();
 
     for (const [taskId, taskData] of scheduledTasks) {
@@ -128,10 +129,10 @@ function checkDueTasks(ioInstance) {
 
         const scheduledTime = new Date(taskData.scheduledTime);
 
-        // Check if task is due (within 30 seconds window)
+        // Check if task is due (within 30 second window)
         if (now >= scheduledTime && (now - scheduledTime) < 30000) {
             console.log(`🔔 Reminder due: ${taskData.task}`);
-            executeReminder(ioInstance, taskData);
+            executeReminder(taskData);
             taskData.executed = true;
         }
 
@@ -145,10 +146,9 @@ function checkDueTasks(ioInstance) {
 /**
  * Execute a reminder - send notification to user
  */
-function executeReminder(ioInstance, taskData) {
+function executeReminder(taskData) {
     const reminderMessage = `Sir, you asked me to remind you: ${taskData.task}`;
 
-    // Send to desktop room
     if (ioInstance) {
         ioInstance.to('desktop_room').emit('reminder:trigger', {
             task: taskData.task,
@@ -157,7 +157,6 @@ function executeReminder(ioInstance, taskData) {
             timestamp: Date.now()
         });
 
-        // Also send as a voice-enabled message
         ioInstance.to('desktop_room').emit('message:response', {
             text: reminderMessage,
             action: 'REMINDER',
@@ -170,19 +169,6 @@ function executeReminder(ioInstance, taskData) {
 }
 
 /**
- * Get all tasks for a session
- */
-export function getSessionTasks(sessionId) {
-    const tasks = [];
-    for (const [_, taskData] of scheduledTasks) {
-        if (taskData.sessionId === sessionId) {
-            tasks.push(taskData);
-        }
-    }
-    return tasks;
-}
-
-/**
  * Get pending tasks count
  */
 export function getPendingTasksCount() {
@@ -192,11 +178,3 @@ export function getPendingTasksCount() {
     }
     return count;
 }
-
-export default {
-    initScheduler,
-    stopScheduler,
-    scheduleTask,
-    getSessionTasks,
-    getPendingTasksCount
-};
