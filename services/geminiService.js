@@ -1,12 +1,13 @@
 /**
  * IRIS Backend - Gemini AI Service
- * Handles communication with Google Gemini 1.5 Flash for intelligent responses
+ * Handles communication with Google Gemini for intelligent responses
+ * Using @google/genai SDK (v1.0+)
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { extractCommandFromText, SUPPORTED_COMMANDS_LIST } from '../utils/commandParser.js';
 
-let ai = null;
+let genAI = null;
 
 // IRIS System Instruction
 const IRIS_SYSTEM_INSTRUCTION = `You are IRIS, an intelligent personal assistant. You're like J.A.R.V.I.S from Iron Man - smart, polite, and technical.
@@ -59,7 +60,7 @@ export function initGemini() {
 
     try {
         genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-        console.log('✅ Gemini AI initialized');
+        console.log('✅ Gemini AI initialized (@google/genai)');
         return true;
     } catch (error) {
         console.error('❌ Gemini initialization error:', error.message);
@@ -82,29 +83,53 @@ function formatHistory(history) {
  */
 export async function processMessage(userMessage, history = []) {
     if (!genAI) {
-        return {
-            action: null,
-            reply: 'عذراً سيدي، خدمة الذكاء الاصطناعي غير متاحة حالياً.',
-            error: true
-        };
+        console.log('⚠️ AI not initialized, trying to reinitialize...');
+        if (!initGemini()) {
+            return {
+                action: null,
+                reply: 'Sorry, the AI service is currently unavailable.',
+                error: true
+            };
+        }
     }
 
     try {
-        // Use generateContent with system instruction and history
+        // Build contents array with history and current message
         const contents = [
             ...formatHistory(history),
             { role: 'user', parts: [{ text: userMessage }] }
         ];
 
-        const response = await genAI.models.generateContent({
-            model: 'gemini-1.5-flash',
-            contents: contents,
-            config: {
-                systemInstruction: IRIS_SYSTEM_INSTRUCTION
-            }
-        });
+        // Call Gemini API using @google/genai SDK
+        // Try gemini-2.0-flash first, fallback to gemini-1.5-flash
+        let response;
+        try {
+            response = await genAI.models.generateContent({
+                model: 'gemini-2.0-flash',
+                contents: contents,
+                config: {
+                    systemInstruction: IRIS_SYSTEM_INSTRUCTION,
+                    maxOutputTokens: 500,
+                    temperature: 0.7
+                }
+            });
+        } catch (e) {
+            console.log('⚠️ gemini-2.0-flash failed, trying gemini-1.5-flash');
+            response = await genAI.models.generateContent({
+                model: 'gemini-1.5-flash',
+                contents: contents,
+                config: {
+                    systemInstruction: IRIS_SYSTEM_INSTRUCTION
+                }
+            });
+        }
 
-        const responseText = response.text.trim();
+        // Extract text from response
+        const responseText = response.text?.trim() ||
+            response.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
+            'I understood your message.';
+
+        console.log('📝 Gemini response:', responseText.substring(0, 100));
 
         // Try to parse as JSON command
         const parsed = parseResponse(responseText);
@@ -119,10 +144,10 @@ export async function processMessage(userMessage, history = []) {
 
         return parsed;
     } catch (error) {
-        console.error('Gemini error:', error.message);
+        console.error('Gemini error:', error.message || error);
         return {
             action: null,
-            reply: 'عذراً سيدي، حدث خطأ في معالجة رسالتك. حاول مرة أخرى.',
+            reply: 'Sorry, there was an error. Please try again.',
             error: true
         };
     }
