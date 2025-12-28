@@ -204,32 +204,42 @@ export async function processMessage(userMessage, history = [], sessionId = 'def
 
 // Parse response and handle special actions
 function parseResponse(text, sessionId) {
-    // Try to extract JSON from the response (could be mixed with text)
-    let jsonMatch = text.match(/\{[\s\S]*?"action"[\s\S]*?\}/);
+    console.log('📝 Parsing AI response:', text.substring(0, 100));
 
-    // Also check for code blocks
-    const codeMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (codeMatch) {
-        jsonMatch = codeMatch[1].match(/\{[\s\S]*?"action"[\s\S]*?\}/) || jsonMatch;
+    // Find JSON by looking for balanced braces
+    let jsonStr = null;
+    const startIdx = text.indexOf('{');
+    if (startIdx !== -1) {
+        let depth = 0;
+        let endIdx = -1;
+        for (let i = startIdx; i < text.length; i++) {
+            if (text[i] === '{') depth++;
+            if (text[i] === '}') depth--;
+            if (depth === 0) {
+                endIdx = i;
+                break;
+            }
+        }
+        if (endIdx > startIdx) {
+            jsonStr = text.substring(startIdx, endIdx + 1);
+        }
     }
 
-    if (jsonMatch) {
+    if (jsonStr) {
         try {
-            const parsed = JSON.parse(jsonMatch[0]);
+            const parsed = JSON.parse(jsonStr);
+            console.log('✅ Parsed JSON:', parsed);
 
-            // Handle REMEMBER action
             if (parsed.action === 'REMEMBER') {
                 savePreference(sessionId, parsed.key, parsed.value);
                 return { action: 'REMEMBER', reply: parsed.reply || 'I will remember that, sir.' };
             }
 
-            // Handle SCHEDULE action
             if (parsed.action === 'SCHEDULE') {
                 scheduleTask(sessionId, parsed.time, parsed.task);
                 return { action: 'SCHEDULE', reply: parsed.reply || 'Task scheduled, sir.' };
             }
 
-            // Handle EXECUTE action
             if (parsed.action === 'EXECUTE') {
                 return {
                     action: parsed.action,
@@ -239,16 +249,15 @@ function parseResponse(text, sessionId) {
                 };
             }
         } catch (e) {
-            console.log('JSON parse error:', e.message);
+            console.log('⚠️ JSON parse error:', e.message);
         }
     }
 
-    // Try extracting command from text pattern [ACTION: X]
     const extracted = extractCommandFromText(text);
     if (extracted) return extracted;
 
-    // Return clean text without any JSON
-    const cleanText = text.replace(/\{[\s\S]*?"action"[\s\S]*?\}/g, '').trim();
+    // Remove any JSON-like text from reply
+    const cleanText = text.replace(/\{[^}]*\}/g, '').replace(/\s+/g, ' ').trim();
     return { action: null, command: null, params: {}, reply: cleanText || text };
 }
 
