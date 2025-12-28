@@ -204,13 +204,18 @@ export async function processMessage(userMessage, history = [], sessionId = 'def
 
 // Parse response and handle special actions
 function parseResponse(text, sessionId) {
-    let jsonText = text;
-    const codeMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (codeMatch) jsonText = codeMatch[1].trim();
+    // Try to extract JSON from the response (could be mixed with text)
+    let jsonMatch = text.match(/\{[\s\S]*?"action"[\s\S]*?\}/);
 
-    if (jsonText.startsWith('{') && jsonText.endsWith('}')) {
+    // Also check for code blocks
+    const codeMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeMatch) {
+        jsonMatch = codeMatch[1].match(/\{[\s\S]*?"action"[\s\S]*?\}/) || jsonMatch;
+    }
+
+    if (jsonMatch) {
         try {
-            const parsed = JSON.parse(jsonText);
+            const parsed = JSON.parse(jsonMatch[0]);
 
             // Handle REMEMBER action
             if (parsed.action === 'REMEMBER') {
@@ -230,16 +235,21 @@ function parseResponse(text, sessionId) {
                     action: parsed.action,
                     command: parsed.command || null,
                     params: parsed.params || {},
-                    reply: parsed.reply || 'Done'
+                    reply: parsed.reply || 'Done, sir.'
                 };
             }
-        } catch (e) { }
+        } catch (e) {
+            console.log('JSON parse error:', e.message);
+        }
     }
 
+    // Try extracting command from text pattern [ACTION: X]
     const extracted = extractCommandFromText(text);
     if (extracted) return extracted;
 
-    return { action: null, command: null, params: {}, reply: text };
+    // Return clean text without any JSON
+    const cleanText = text.replace(/\{[\s\S]*?"action"[\s\S]*?\}/g, '').trim();
+    return { action: null, command: null, params: {}, reply: cleanText || text };
 }
 
 export function isLikelyCommand(message) {
