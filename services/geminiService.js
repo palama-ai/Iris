@@ -105,7 +105,7 @@ export async function processMessage(userMessage, history = []) {
         let response;
         try {
             response = await genAI.models.generateContent({
-                model: 'gemini-2.0-flash',
+                model: 'models/gemini-2.0-flash',
                 contents: contents,
                 config: {
                     systemInstruction: IRIS_SYSTEM_INSTRUCTION,
@@ -114,9 +114,9 @@ export async function processMessage(userMessage, history = []) {
                 }
             });
         } catch (e) {
-            console.log('⚠️ gemini-2.0-flash failed, trying gemini-1.5-flash');
+            console.log('⚠️ gemini-2.0-flash failed, trying gemini-1.5-flash-002');
             response = await genAI.models.generateContent({
-                model: 'gemini-1.5-flash',
+                model: 'models/gemini-1.5-flash-002',
                 contents: contents,
                 config: {
                     systemInstruction: IRIS_SYSTEM_INSTRUCTION
