@@ -1,74 +1,148 @@
 /**
  * IRIS Backend - AI Service with Groq
- * Uses Groq API for fast, free AI responses
+ * Features: Time/Date Awareness, Memory, Task Scheduling
  */
 
 import { extractCommandFromText, SUPPORTED_COMMANDS_LIST } from '../utils/commandParser.js';
 
-// Groq API - Fast & Free
+// Groq API
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-// IRIS System Instruction
-const IRIS_SYSTEM = `You are IRIS, an intelligent personal assistant like J.A.R.V.I.S from Iron Man.
+// Get current date/time info
+function getTimeContext() {
+    const now = new Date();
+    const options = {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: true, timeZoneName: 'short'
+    };
+    const timeStr = now.toLocaleString('en-US', options);
+    const hour = now.getHours();
+
+    let greeting = 'Hello';
+    if (hour < 12) greeting = 'Good morning';
+    else if (hour < 17) greeting = 'Good afternoon';
+    else if (hour < 21) greeting = 'Good evening';
+    else greeting = 'Good night';
+
+    return { timeStr, greeting, timestamp: now.toISOString() };
+}
+
+// Build system prompt with time context
+function buildSystemPrompt(userPreferences = []) {
+    const { timeStr, greeting } = getTimeContext();
+
+    let preferencesContext = '';
+    if (userPreferences.length > 0) {
+        preferencesContext = `\n\n## User Preferences (from memory):\n${userPreferences.map(p => `- ${p.key}: ${p.value}`).join('\n')}`;
+    }
+
+    return `You are IRIS, an intelligent personal assistant like J.A.R.V.I.S from Iron Man.
+
+## Current Time:
+${timeStr}
+Appropriate greeting: "${greeting}, sir"
 
 ## Identity:
 - Name: IRIS (Intelligent Real-time Interactive System)
-- Professional, polite, sometimes call user "sir"
+- Professional, polite, call user "sir"
 - Keep responses SHORT (1-2 sentences max)
-- Respond in user's language
+- Respond in the same language as the user
+${preferencesContext}
 
-## Commands:
-When user requests action, respond with JSON:
+## Special Commands:
+
+### For time questions:
+When asked about time/date, use the current time above.
+
+### For remembering preferences:
+When user says "remember that I like X" or "my favorite X is Y", respond with:
+{"action": "REMEMBER", "key": "category", "value": "preference", "reply": "I'll remember that, sir."}
+
+### For scheduling:
+When user says "remind me at X to do Y" or "schedule X for Y", respond with:
+{"action": "SCHEDULE", "time": "ISO datetime", "task": "description", "reply": "Scheduled, sir."}
+
+### For action commands:
 {"action": "EXECUTE", "command": "TYPE", "params": {...}, "reply": "short reply"}
 
-Commands: ${SUPPORTED_COMMANDS_LIST}
+Available commands: ${SUPPORTED_COMMANDS_LIST}
 
 ## Examples:
+"What time is it?" → It's currently [time from context above], sir.
+"Remember I like jazz" → {"action": "REMEMBER", "key": "music", "value": "jazz", "reply": "I'll remember you like jazz, sir."}
+"Remind me at 5pm to call mom" → {"action": "SCHEDULE", "time": "2024-12-28T17:00:00", "task": "call mom", "reply": "I'll remind you at 5 PM, sir."}
 "Open browser" → {"action": "EXECUTE", "command": "OPEN_BROWSER", "params": {}, "reply": "Opening browser, sir."}
-"How are you?" → I'm functioning perfectly, sir. How can I assist you?
-"What's your name?" → I'm IRIS, your personal AI assistant.
-
-Be helpful, professional, and concise.`;
+"How are you?" → I'm functioning perfectly, ${greeting.toLowerCase().includes('good') ? greeting.toLowerCase() : 'sir'}. How can I assist you?`;
+}
 
 let apiKey = null;
 
-/**
- * Initialize AI Service
- */
+// In-memory storage for preferences and tasks (can be moved to database later)
+const userMemory = new Map(); // sessionId -> { preferences: [], scheduledTasks: [] }
+
 export function initGemini() {
-    // Check for Groq API Key first, then Gemini
     if (process.env.GROQ_API_KEY) {
         apiKey = process.env.GROQ_API_KEY;
-        console.log('✅ AI initialized (Groq API)');
+        console.log('✅ AI initialized (Groq API) with Time/Memory features');
         return true;
     }
     if (process.env.GEMINI_API_KEY) {
         apiKey = process.env.GEMINI_API_KEY;
-        console.log('✅ AI initialized (Gemini API - fallback)');
+        console.log('✅ AI initialized (Gemini fallback)');
         return true;
     }
-    console.error('❌ No API key set (GROQ_API_KEY or GEMINI_API_KEY)');
+    console.error('❌ No API key set');
     return false;
 }
 
-/**
- * Process message with Groq API
- */
-export async function processMessage(userMessage, history = []) {
+// Get or create user memory
+function getUserMemory(sessionId) {
+    if (!userMemory.has(sessionId)) {
+        userMemory.set(sessionId, { preferences: [], scheduledTasks: [] });
+    }
+    return userMemory.get(sessionId);
+}
+
+// Save preference
+export function savePreference(sessionId, key, value) {
+    const mem = getUserMemory(sessionId);
+    const existing = mem.preferences.findIndex(p => p.key === key);
+    if (existing >= 0) {
+        mem.preferences[existing].value = value;
+    } else {
+        mem.preferences.push({ key, value, savedAt: new Date().toISOString() });
+    }
+    console.log(`💾 Saved preference for ${sessionId}: ${key} = ${value}`);
+}
+
+// Schedule task
+export function scheduleTask(sessionId, time, task) {
+    const mem = getUserMemory(sessionId);
+    mem.scheduledTasks.push({
+        time,
+        task,
+        status: 'pending',
+        createdAt: new Date().toISOString()
+    });
+    console.log(`📅 Scheduled task for ${sessionId}: ${task} at ${time}`);
+}
+
+// Process message
+export async function processMessage(userMessage, history = [], sessionId = 'default') {
     if (!apiKey && !initGemini()) {
         return { action: null, reply: 'AI service unavailable.', error: true };
     }
 
-    // Check if using Groq or Gemini
-    const isGroq = process.env.GROQ_API_KEY ? true : false;
+    const isGroq = !!process.env.GROQ_API_KEY;
+    const mem = getUserMemory(sessionId);
+    const systemPrompt = buildSystemPrompt(mem.preferences);
 
     try {
         let responseText;
 
         if (isGroq) {
-            // Groq API (OpenAI compatible)
             const messages = [
-                { role: 'system', content: IRIS_SYSTEM },
+                { role: 'system', content: systemPrompt },
                 ...history.map(h => ({ role: h.role, content: h.content })),
                 { role: 'user', content: userMessage }
             ];
@@ -81,7 +155,7 @@ export async function processMessage(userMessage, history = []) {
                 },
                 body: JSON.stringify({
                     model: 'llama-3.3-70b-versatile',
-                    messages: messages,
+                    messages,
                     max_tokens: 300,
                     temperature: 0.7
                 })
@@ -96,11 +170,11 @@ export async function processMessage(userMessage, history = []) {
             const data = await response.json();
             responseText = data.choices?.[0]?.message?.content?.trim() || 'I understood.';
         } else {
-            // Gemini API fallback
+            // Gemini fallback
             const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
             const contents = [
-                { role: 'user', parts: [{ text: `System: ${IRIS_SYSTEM}` }] },
-                { role: 'model', parts: [{ text: 'Understood. I am IRIS.' }] },
+                { role: 'user', parts: [{ text: `System: ${systemPrompt}` }] },
+                { role: 'model', parts: [{ text: 'Understood.' }] },
                 ...history.map(h => ({
                     role: h.role === 'assistant' ? 'model' : 'user',
                     parts: [{ text: h.content }]
@@ -114,27 +188,22 @@ export async function processMessage(userMessage, history = []) {
                 body: JSON.stringify({ contents })
             });
 
-            if (!response.ok) {
-                throw new Error(`Gemini error: ${response.status}`);
-            }
-
+            if (!response.ok) throw new Error(`Gemini error: ${response.status}`);
             const data = await response.json();
             responseText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'I understood.';
         }
 
-        console.log('📝 AI response:', responseText.substring(0, 80));
-        return parseResponse(responseText);
+        console.log('📝 AI:', responseText.substring(0, 80));
+        return parseResponse(responseText, sessionId);
 
     } catch (error) {
         console.error('AI error:', error.message);
-        return { action: null, reply: 'Sorry, an error occurred. Please try again.', error: true };
+        return { action: null, reply: 'Sorry, an error occurred.', error: true };
     }
 }
 
-/**
- * Parse response for commands
- */
-function parseResponse(text) {
+// Parse response and handle special actions
+function parseResponse(text, sessionId) {
     let jsonText = text;
     const codeMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (codeMatch) jsonText = codeMatch[1].trim();
@@ -142,6 +211,20 @@ function parseResponse(text) {
     if (jsonText.startsWith('{') && jsonText.endsWith('}')) {
         try {
             const parsed = JSON.parse(jsonText);
+
+            // Handle REMEMBER action
+            if (parsed.action === 'REMEMBER') {
+                savePreference(sessionId, parsed.key, parsed.value);
+                return { action: 'REMEMBER', reply: parsed.reply || 'I will remember that, sir.' };
+            }
+
+            // Handle SCHEDULE action
+            if (parsed.action === 'SCHEDULE') {
+                scheduleTask(sessionId, parsed.time, parsed.task);
+                return { action: 'SCHEDULE', reply: parsed.reply || 'Task scheduled, sir.' };
+            }
+
+            // Handle EXECUTE action
             if (parsed.action === 'EXECUTE') {
                 return {
                     action: parsed.action,
@@ -153,7 +236,6 @@ function parseResponse(text) {
         } catch (e) { }
     }
 
-    // Check for extracted command
     const extracted = extractCommandFromText(text);
     if (extracted) return extracted;
 
@@ -161,7 +243,7 @@ function parseResponse(text) {
 }
 
 export function isLikelyCommand(message) {
-    const keywords = ['افتح', 'شغل', 'أغلق', 'ابحث', 'open', 'run', 'close', 'search', 'launch', 'start', 'play'];
+    const keywords = ['افتح', 'شغل', 'أغلق', 'ابحث', 'open', 'run', 'close', 'search', 'launch', 'start', 'play', 'remember', 'remind', 'schedule'];
     return keywords.some(k => message.toLowerCase().includes(k));
 }
 

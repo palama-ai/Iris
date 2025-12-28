@@ -310,8 +310,8 @@ io.on('connection', (socket) => {
             // Get conversation history from database (last 10 messages)
             const history = await getHistory(sessionId, 10);
 
-            // Process with Gemini
-            let response = await processMessage(text, history);
+            // Process with AI (passing sessionId for memory features)
+            let response = await processMessage(text, history, sessionId);
 
             // Fallback to natural language parsing if no command detected
             if (!response.action && !response.error) {
