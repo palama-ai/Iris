@@ -308,12 +308,23 @@ export function parseNaturalCommand(text) {
         return createCommand('VOLUME_CONTROL', { level: 'mute' }, 'تم كتم الصوت');
     }
 
-    // App patterns
+    // App patterns - generic "open X" at the end to catch anything
     if (/افتح (برنامج|تطبيق)|open (app|application|program)/i.test(text)) {
         const appMatch = text.match(/(?:افتح (?:برنامج|تطبيق)|open (?:app|application|program))\s+(.+)/i);
         if (appMatch) {
             return createCommand('OPEN_APP', { name: appMatch[1].trim() }, `جاري فتح ${appMatch[1]}`);
         }
+    }
+
+    // Generic "open X" pattern - catches "open notepad", "open chrome", etc.
+    const openMatch = text.match(/^(?:open|افتح)\s+(.+)/i);
+    if (openMatch) {
+        const appName = openMatch[1].trim();
+        // Check if it's a URL
+        if (appName.includes('.') && !appName.includes(' ')) {
+            return createCommand('OPEN_BROWSER', { url: appName }, `Opening ${appName}`);
+        }
+        return createCommand('OPEN_APP', { name: appName }, `Opening ${appName}`);
     }
 
     return null;
