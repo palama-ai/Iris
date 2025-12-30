@@ -165,6 +165,9 @@ app.get('/', (req, res) => {
     });
 });
 
+// Apps API - Sync installed apps
+app.use('/api/apps', appsRouter);
+
 // Status endpoint - detailed server status
 app.get('/status', (req, res) => {
     const uptime = process.uptime();
