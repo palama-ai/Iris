@@ -91,7 +91,7 @@ export const COMMAND_TYPES = {
     },
     GESTURE_CONTROL: {
         name: 'GESTURE_CONTROL',
-        description: 'Enable or disable hand gesture control',
+        description: 'Toggle the hand gesture control interface (UI State). DO NOT use OPEN_APP for this.',
         requiredParams: [], // AI may send enable:true/false or action:enable/disable
         optionalParams: ['enable', 'action'],
         aliases: ['gesture', 'hand control', 'hand tracking', 'إيماءات', 'تحكم باليد']
