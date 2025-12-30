@@ -92,8 +92,8 @@ export const COMMAND_TYPES = {
     GESTURE_CONTROL: {
         name: 'GESTURE_CONTROL',
         description: 'Enable or disable hand gesture control',
-        requiredParams: ['action'], // 'enable' or 'disable'
-        optionalParams: [],
+        requiredParams: [], // AI may send enable:true/false or action:enable/disable
+        optionalParams: ['enable', 'action'],
         aliases: ['gesture', 'hand control', 'hand tracking', 'إيماءات', 'تحكم باليد']
     }
 };
