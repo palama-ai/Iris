@@ -191,6 +191,12 @@ export function validateCommand(command) {
 
     // Check required parameters
     const params = command.params || {};
+
+    // Normalize: AI sometimes sends 'app' instead of 'name' for OPEN_APP
+    if (command.command === 'OPEN_APP' && params.app && !params.name) {
+        params.name = params.app;
+    }
+
     for (const required of commandType.requiredParams) {
         if (!params[required]) {
             return {
