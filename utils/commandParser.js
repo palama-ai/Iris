@@ -88,6 +88,13 @@ export const COMMAND_TYPES = {
         requiredParams: [],
         optionalParams: [],
         aliases: ['lock', 'قفل', 'قفل الشاشة']
+    },
+    GESTURE_CONTROL: {
+        name: 'GESTURE_CONTROL',
+        description: 'Enable or disable hand gesture control',
+        requiredParams: ['action'], // 'enable' or 'disable'
+        optionalParams: [],
+        aliases: ['gesture', 'hand control', 'hand tracking', 'إيماءات', 'تحكم باليد']
     }
 };
 
