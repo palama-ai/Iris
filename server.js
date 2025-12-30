@@ -24,6 +24,8 @@ import { initScheduler, scheduleTask, getPendingTasksCount } from './services/sc
 import { initDatabase, setupTables, getOrCreateSession, saveMessage, getHistory, clearHistory } from './config/database.js';
 import { validateCommand, createDesktopPayload, parseNaturalCommand } from './utils/commandParser.js';
 import { logCommand, logEvent, getRecentLogs } from './utils/logger.js';
+import appsRouter from './routes/apps.js';
+import { searchApp } from './config/database.js';
 
 // Configuration
 const PORT = process.env.PORT || 3000;
@@ -336,6 +338,19 @@ io.on('connection', (socket) => {
                         console.log('⚠️  Command requested but desktop not connected');
                         await sendDesktopNotConnectedMessage(socket);
                         return;
+                    }
+
+                    // Special handling for OPEN_APP - check DB if path is missing
+                    if (response.command === 'OPEN_APP' && response.params.name && !response.params.path) {
+                        console.log(`🔍 Looking up app path for: "${response.params.name}"`);
+                        const dbApp = await searchApp(response.params.name);
+                        if (dbApp) {
+                            console.log(`✅ Found app in DB: ${dbApp.name} -> ${dbApp.path}`);
+                            response.params.path = dbApp.path; // Inject path into params
+                            response.params.fromDb = true;
+                        } else {
+                            console.log(`⚠️ App not found in DB: ${response.params.name}`);
+                        }
                     }
 
                     // Send command to desktop room
