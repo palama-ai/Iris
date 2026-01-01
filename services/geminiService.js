@@ -1,9 +1,14 @@
 /**
  * IRIS Backend - AI Service with Groq
- * Features: Time/Date Awareness, Memory, Task Scheduling
+ * Features: Time/Date Awareness, PERSISTENT Memory, Task Scheduling
  */
 
 import { extractCommandFromText, SUPPORTED_COMMANDS_LIST } from '../utils/commandParser.js';
+import {
+    saveUserPreference,
+    getUserPreferences,
+    saveScheduledTask
+} from '../config/database.js';
 
 // Groq API
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -27,7 +32,7 @@ function getTimeContext() {
     return { timeStr, greeting, timestamp: now.toISOString() };
 }
 
-// Build system prompt with time context
+// Build system prompt with time context and preferences from database
 function buildSystemPrompt(userPreferences = []) {
     const { timeStr, greeting } = getTimeContext();
 
@@ -55,8 +60,16 @@ ${preferencesContext}
 When asked about time/date, use the current time above.
 
 ### For remembering preferences:
-When user says "remember that I like X" or "my favorite X is Y", respond with:
+When user says "remember that I like X" or "my favorite X is Y" or "my name is X", respond with:
 {"action": "REMEMBER", "key": "category", "value": "preference", "reply": "I'll remember that, sir."}
+
+Examples of what to remember:
+- "my name is Ahmed" → {"action": "REMEMBER", "key": "name", "value": "Ahmed", "reply": "Nice to meet you, Ahmed. I'll remember your name, sir."}
+- "remember I like jazz" → {"action": "REMEMBER", "key": "favorite_music", "value": "jazz", "reply": "I'll remember you like jazz, sir."}
+- "my favorite color is blue" → {"action": "REMEMBER", "key": "favorite_color", "value": "blue", "reply": "I'll remember that blue is your favorite color, sir."}
+
+### For recall questions:
+When user asks about stored preferences like "what's my name?", use the User Preferences section above to answer.
 
 ### For scheduling:
 When user says "remind me at X to do Y" or "schedule X for Y", respond with:
@@ -79,23 +92,20 @@ Available commands: ${SUPPORTED_COMMANDS_LIST}
 
 ## Examples:
 "What time is it?" → It's currently [time from context above], sir.
-"Remember I like jazz" → {"action": "REMEMBER", "key": "music", "value": "jazz", "reply": "I'll remember you like jazz, sir."}
+"my name is Ahmed" → {"action": "REMEMBER", "key": "name", "value": "Ahmed", "reply": "Nice to meet you, Ahmed. I'll remember your name, sir."}
+"Remember I like jazz" → {"action": "REMEMBER", "key": "favorite_music", "value": "jazz", "reply": "I'll remember you like jazz, sir."}
 "Remind me at 5pm to call mom" → {"action": "SCHEDULE", "time": "2024-12-28T17:00:00", "task": "call mom", "reply": "I'll remind you at 5 PM, sir."}
 "Open browser" → {"action": "EXECUTE", "command": "OPEN_BROWSER", "params": {}, "reply": "Opening browser, sir."}
 "Post 'Hello World' on LinkedIn" → {"action": "COMPLEX_TASK", "description": "Post 'Hello World' on LinkedIn", "tool": "browser", "reply": "I'll post that to LinkedIn for you, sir."}
-"Open VS Code and create a new file" → {"action": "COMPLEX_TASK", "description": "Open VS Code and create a new file", "tool": "app", "reply": "Creating a new file in VS Code, sir."}
 "How are you?" → I'm functioning perfectly, ${greeting.toLowerCase().includes('good') ? greeting.toLowerCase() : 'sir'}. How can I assist you?`;
 }
 
 let apiKey = null;
 
-// In-memory storage for preferences and tasks (can be moved to database later)
-const userMemory = new Map(); // sessionId -> { preferences: [], scheduledTasks: [] }
-
 export function initGemini() {
     if (process.env.GROQ_API_KEY) {
         apiKey = process.env.GROQ_API_KEY;
-        console.log('✅ AI initialized (Groq API) with Time/Memory features');
+        console.log('✅ AI initialized (Groq API) with PERSISTENT Memory features');
         return true;
     }
     if (process.env.GEMINI_API_KEY) {
@@ -107,37 +117,24 @@ export function initGemini() {
     return false;
 }
 
-// Get or create user memory
-function getUserMemory(sessionId) {
-    if (!userMemory.has(sessionId)) {
-        userMemory.set(sessionId, { preferences: [], scheduledTasks: [] });
+// Save preference to DATABASE (persistent)
+export async function savePreference(sessionId, key, value) {
+    const saved = await saveUserPreference(sessionId, key, value);
+    if (saved) {
+        console.log(`💾 Preference SAVED TO DATABASE: ${key} = ${value}`);
     }
-    return userMemory.get(sessionId);
+    return saved;
 }
 
-// Save preference
-export function savePreference(sessionId, key, value) {
-    const mem = getUserMemory(sessionId);
-    const existing = mem.preferences.findIndex(p => p.key === key);
-    if (existing >= 0) {
-        mem.preferences[existing].value = value;
-    } else {
-        mem.preferences.push({ key, value, savedAt: new Date().toISOString() });
+// Schedule task in DATABASE (persistent)
+export async function scheduleTask(sessionId, time, task) {
+    const taskId = await saveScheduledTask(sessionId, time, task);
+    if (taskId) {
+        console.log(`📅 Task SAVED TO DATABASE: "${task}" at ${time}`);
     }
-    console.log(`💾 Saved preference for ${sessionId}: ${key} = ${value}`);
+    return taskId;
 }
 
-// Schedule task
-export function scheduleTask(sessionId, time, task) {
-    const mem = getUserMemory(sessionId);
-    mem.scheduledTasks.push({
-        time,
-        task,
-        status: 'pending',
-        createdAt: new Date().toISOString()
-    });
-    console.log(`📅 Scheduled task for ${sessionId}: ${task} at ${time}`);
-}
 
 // Process message
 export async function processMessage(userMessage, history = [], sessionId = 'default') {
@@ -146,8 +143,10 @@ export async function processMessage(userMessage, history = [], sessionId = 'def
     }
 
     const isGroq = !!process.env.GROQ_API_KEY;
-    const mem = getUserMemory(sessionId);
-    const systemPrompt = buildSystemPrompt(mem.preferences);
+
+    // Load preferences from DATABASE (persistent memory!)
+    const userPreferences = await getUserPreferences(sessionId);
+    const systemPrompt = buildSystemPrompt(userPreferences);
 
     try {
         let responseText;
@@ -206,7 +205,7 @@ export async function processMessage(userMessage, history = [], sessionId = 'def
         }
 
         console.log('📝 AI:', responseText.substring(0, 80));
-        return parseResponse(responseText, sessionId);
+        return await parseResponse(responseText, sessionId);
 
     } catch (error) {
         console.error('AI error:', error.message);
@@ -215,7 +214,7 @@ export async function processMessage(userMessage, history = [], sessionId = 'def
 }
 
 // Parse response and handle special actions
-function parseResponse(text, sessionId) {
+async function parseResponse(text, sessionId) {
     console.log('📝 Parsing AI response:', text.substring(0, 100));
 
     // Find JSON by looking for balanced braces
@@ -243,13 +242,15 @@ function parseResponse(text, sessionId) {
             console.log('✅ Parsed JSON:', parsed);
 
             if (parsed.action === 'REMEMBER') {
-                savePreference(sessionId, parsed.key, parsed.value);
+                // Save to DATABASE (persistent!)
+                await savePreference(sessionId, parsed.key, parsed.value);
                 return { action: 'REMEMBER', reply: parsed.reply || 'I will remember that, sir.' };
             }
 
             if (parsed.action === 'SCHEDULE') {
-                scheduleTask(sessionId, parsed.time, parsed.task);
-                return { action: 'SCHEDULE', reply: parsed.reply || 'Task scheduled, sir.' };
+                // Save to DATABASE (persistent!)
+                await scheduleTask(sessionId, parsed.time, parsed.task);
+                return { action: 'SCHEDULE', reply: parsed.reply || 'Task scheduled, sir.', time: parsed.time, task: parsed.task };
             }
 
             if (parsed.action === 'EXECUTE') {
