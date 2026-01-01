@@ -62,7 +62,17 @@ When user says "remember that I like X" or "my favorite X is Y", respond with:
 When user says "remind me at X to do Y" or "schedule X for Y", respond with:
 {"action": "SCHEDULE", "time": "ISO datetime", "task": "description", "reply": "Scheduled, sir."}
 
-### For action commands:
+### For COMPLEX multi-step tasks:
+When user requests a task requiring multiple steps (like "post on LinkedIn", "send email", "create document and save it"), respond with:
+{"action": "COMPLEX_TASK", "description": "clear task description", "tool": "browser|app|system", "reply": "I'll handle that for you, sir."}
+
+Complex task indicators:
+- Social media actions (post, share, like, comment)
+- Multi-step workflows (create and save, open and edit, search and download)
+- Browser automation (fill forms, login, book tickets)
+- Application workflows (create presentation, send email with attachment)
+
+### For SIMPLE action commands:
 {"action": "EXECUTE", "command": "TYPE", "params": {...}, "reply": "short reply"}
 
 Available commands: ${SUPPORTED_COMMANDS_LIST}
@@ -72,6 +82,8 @@ Available commands: ${SUPPORTED_COMMANDS_LIST}
 "Remember I like jazz" → {"action": "REMEMBER", "key": "music", "value": "jazz", "reply": "I'll remember you like jazz, sir."}
 "Remind me at 5pm to call mom" → {"action": "SCHEDULE", "time": "2024-12-28T17:00:00", "task": "call mom", "reply": "I'll remind you at 5 PM, sir."}
 "Open browser" → {"action": "EXECUTE", "command": "OPEN_BROWSER", "params": {}, "reply": "Opening browser, sir."}
+"Post 'Hello World' on LinkedIn" → {"action": "COMPLEX_TASK", "description": "Post 'Hello World' on LinkedIn", "tool": "browser", "reply": "I'll post that to LinkedIn for you, sir."}
+"Open VS Code and create a new file" → {"action": "COMPLEX_TASK", "description": "Open VS Code and create a new file", "tool": "app", "reply": "Creating a new file in VS Code, sir."}
 "How are you?" → I'm functioning perfectly, ${greeting.toLowerCase().includes('good') ? greeting.toLowerCase() : 'sir'}. How can I assist you?`;
 }
 
@@ -246,6 +258,15 @@ function parseResponse(text, sessionId) {
                     command: parsed.command || null,
                     params: parsed.params || {},
                     reply: parsed.reply || 'Done, sir.'
+                };
+            }
+
+            if (parsed.action === 'COMPLEX_TASK') {
+                return {
+                    action: 'COMPLEX_TASK',
+                    description: parsed.description || 'Execute complex task',
+                    tool: parsed.tool || 'system',
+                    reply: parsed.reply || 'I\'ll handle that for you, sir.'
                 };
             }
         } catch (e) {
