@@ -21,6 +21,9 @@ import {
     isConfigured as isElevenLabsConfigured
 } from './services/elevenLabsService.js';
 import { initScheduler, scheduleTask, getPendingTasksCount } from './services/schedulerService.js';
+import { TaskController } from './services/TaskController.js';
+import { getBrowserAutomation } from './services/BrowserAutomation.js';
+import { getScreenshotService } from './services/ScreenshotService.js';
 import { initDatabase, setupTables, getOrCreateSession, saveMessage, getHistory, clearHistory } from './config/database.js';
 import { validateCommand, createDesktopPayload, parseNaturalCommand } from './utils/commandParser.js';
 import { logCommand, logEvent, getRecentLogs } from './utils/logger.js';
@@ -30,6 +33,9 @@ import { searchApp } from './config/database.js';
 // Configuration
 const PORT = process.env.PORT || 3000;
 const AUTH_TOKEN = process.env.AUTH_TOKEN;
+
+// Task Controller instance (initialized in startServer)
+let taskController = null;
 
 // Express app setup
 const app = express();
@@ -378,6 +384,29 @@ io.on('connection', (socket) => {
                 }
             }
 
+            // Handle COMPLEX_TASK action - execute via TaskController
+            if (response.action === 'COMPLEX_TASK') {
+                console.log(`🤖 Complex task detected: ${response.description}`);
+
+                // Check if desktop is connected
+                if (!isDesktopConnected()) {
+                    console.log('⚠️  Complex task requested but desktop not connected');
+                    await sendDesktopNotConnectedMessage(socket);
+                    return;
+                }
+
+                // Execute the complex task via TaskController
+                if (taskController) {
+                    taskController.executeComplexTask(sessionId, response.description, socket)
+                        .catch(err => {
+                            console.error('TaskController error:', err);
+                            socket.emit('task:failed', { error: err.message });
+                        });
+                } else {
+                    console.warn('⚠️ TaskController not initialized');
+                }
+            }
+
             // Send response back to client
             socket.emit('message:response', {
                 text: response.reply,
@@ -457,6 +486,54 @@ io.on('connection', (socket) => {
     });
 
     // ----------------------------------------
+    // Complex Task Automation (ReAct Agent)
+    // ----------------------------------------
+
+    socket.on('task:execute', async (data) => {
+        const { description, withVoice = true } = data;
+
+        if (!description || !sessionId) {
+            socket.emit('error', { message: 'Invalid task or session' });
+            return;
+        }
+
+        console.log(`🤖 Complex task request from ${deviceType}: ${description}`);
+
+        // Check if desktop is connected for desktop tasks
+        if (!isDesktopConnected()) {
+            console.log('⚠️  Complex task requested but desktop not connected');
+            await sendDesktopNotConnectedMessage(socket);
+            return;
+        }
+
+        try {
+            const result = await taskController.executeComplexTask(sessionId, description, socket);
+
+            // Send voice response if requested
+            if (isElevenLabsConfigured() && withVoice && result.success) {
+                const message = 'تم تنفيذ المهمة بنجاح سيدي.';
+                streamVoiceToSocket(socket, message);
+            }
+        } catch (error) {
+            console.error('Task execution error:', error);
+            socket.emit('task:failed', { error: error.message });
+        }
+    });
+
+    socket.on('task:confirm', (data) => {
+        if (taskController) {
+            taskController.handleUserConfirmation(sessionId, data.confirmed);
+        }
+    });
+
+    socket.on('task:cancel', () => {
+        if (taskController && sessionId) {
+            const cancelled = taskController.cancelTask(sessionId);
+            socket.emit('task:cancelled', { success: cancelled });
+        }
+    });
+
+    // ----------------------------------------
     // Disconnection
     // ----------------------------------------
 
@@ -504,6 +581,17 @@ async function startServer() {
 
     // Initialize task scheduler
     initScheduler(io);
+
+    // Initialize Task Controller (ReAct Agent)
+    taskController = new TaskController(io);
+    try {
+        const browserAutomation = getBrowserAutomation();
+        const screenshotService = getScreenshotService();
+        taskController.setServices(browserAutomation, screenshotService);
+        console.log('🤖 Task Controller: Ready');
+    } catch (e) {
+        console.warn('⚠️  Task Controller initialized without browser automation:', e.message);
+    }
 
     // Start listening
     httpServer.listen(PORT, () => {
