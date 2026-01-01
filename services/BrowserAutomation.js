@@ -3,9 +3,19 @@
  * 
  * Uses Playwright for complex browser automation tasks.
  * Supports navigation, clicking, typing, and screenshot capture.
+ * 
+ * NOTE: Playwright is optional - falls back gracefully if not installed
  */
 
-import { chromium } from 'playwright';
+let chromium = null;
+try {
+    const playwright = await import('playwright');
+    chromium = playwright.chromium;
+    console.log('✅ Playwright loaded successfully');
+} catch (e) {
+    console.warn('⚠️ Playwright not available - browser automation disabled');
+    console.warn('   Install with: npm install playwright && npx playwright install chromium');
+}
 import path from 'path';
 import os from 'os';
 
