@@ -39,6 +39,11 @@ class BrowserAutomation {
      * Initialize browser with persistent profile
      */
     async initialize() {
+        // Check if Playwright is available
+        if (!chromium) {
+            throw new Error('Playwright not available - browser automation disabled');
+        }
+
         if (this.isInitialized) {
             console.log('🌐 Browser already initialized');
             return;
@@ -347,9 +352,13 @@ let browserInstance = null;
 
 /**
  * Get or create browser automation instance
- * @returns {BrowserAutomation}
+ * Returns null if Playwright is not available
+ * @returns {BrowserAutomation|null}
  */
 export function getBrowserAutomation() {
+    if (!chromium) {
+        return null; // Playwright not available
+    }
     if (!browserInstance) {
         browserInstance = new BrowserAutomation();
     }
