@@ -384,7 +384,7 @@ io.on('connection', (socket) => {
                 }
             }
 
-            // Handle COMPLEX_TASK action - execute via TaskController
+            // Handle COMPLEX_TASK action - send to desktop for LOCAL execution
             if (response.action === 'COMPLEX_TASK') {
                 console.log(`🤖 Complex task detected: ${response.description}`);
 
@@ -395,16 +395,19 @@ io.on('connection', (socket) => {
                     return;
                 }
 
-                // Execute the complex task via TaskController
-                if (taskController) {
-                    taskController.executeComplexTask(sessionId, response.description, socket)
-                        .catch(err => {
-                            console.error('TaskController error:', err);
-                            socket.emit('task:failed', { error: err.message });
-                        });
-                } else {
-                    console.warn('⚠️ TaskController not initialized');
-                }
+                // Send COMPLEX_TASK command to desktop for local Playwright execution
+                const complexPayload = {
+                    type: 'EXECUTE_COMMAND',
+                    command: 'COMPLEX_TASK',
+                    params: {
+                        description: response.description,
+                        tool: response.tool || 'browser'
+                    },
+                    timestamp: Date.now()
+                };
+
+                io.to('desktop_room').emit('command:execute', complexPayload);
+                console.log(`📤 Complex task sent to desktop: ${response.description}`);
             }
 
             // Send response back to client
