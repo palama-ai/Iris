@@ -24,9 +24,11 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "playwright": "^1.40.0",
     "socket.io": "^4.7.2",
     "uuid": "^9.0.1",
     "ws": "^8.16.0"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.40.0"
   }
 }
