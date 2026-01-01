@@ -95,6 +95,27 @@ export const COMMAND_TYPES = {
         requiredParams: [], // AI may send enable:true/false or action:enable/disable
         optionalParams: ['enable', 'action'],
         aliases: ['gesture', 'hand control', 'hand tracking', 'إيماءات', 'تحكم باليد']
+    },
+    COMPLEX_TASK: {
+        name: 'COMPLEX_TASK',
+        description: 'Execute a multi-step automated task using ReAct agent',
+        requiredParams: ['description'],
+        optionalParams: ['steps', 'tool'],
+        aliases: ['task', 'automation', 'مهمة', 'أتمتة', 'نفذ مهمة']
+    },
+    TAKE_SCREENSHOT: {
+        name: 'TAKE_SCREENSHOT',
+        description: 'Capture a screenshot of the screen',
+        requiredParams: [],
+        optionalParams: ['region'],
+        aliases: ['screenshot', 'capture', 'لقطة شاشة', 'صورة']
+    },
+    SEND_HOTKEY: {
+        name: 'SEND_HOTKEY',
+        description: 'Send a keyboard shortcut (e.g., Ctrl+C, Alt+Tab)',
+        requiredParams: ['hotkey'],
+        optionalParams: [],
+        aliases: ['hotkey', 'shortcut', 'اختصار', 'مفتاح']
     }
 };
 
