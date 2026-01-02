@@ -320,6 +320,91 @@ app.post('/api/generate', async (req, res) => {
     }
 });
 
+// Vision Analysis endpoint - for screenshot-based automation
+app.post('/api/vision/analyze', async (req, res) => {
+    const { image, task } = req.body;
+
+    if (!image || !task) {
+        return res.status(400).json({ error: 'Image and task are required' });
+    }
+
+    const geminiKey = process.env.GEMINI_API_KEY;
+    if (!geminiKey) {
+        return res.status(500).json({ error: 'GEMINI_API_KEY not configured for vision' });
+    }
+
+    console.log('🔍 Vision analysis request:', task);
+
+    const prompt = `You are a UI automation assistant. Analyze this screenshot and help complete this task: "${task}"
+
+Your job is to:
+1. Identify the UI element needed to complete the task
+2. Provide its approximate pixel coordinates (x, y from top-left)
+3. Describe what action to take
+
+Respond in JSON format ONLY:
+{
+    "found": true/false,
+    "element": "description of the element",
+    "action": "click" | "type" | "scroll",
+    "coordinates": {"x": number, "y": number},
+    "confidence": 0.0-1.0,
+    "nextStep": "what to do after this action"
+}
+
+If you can't find the element, set found=false and explain in element field.
+Be precise with coordinates - estimate the CENTER of the clickable element.`;
+
+    try {
+        const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + geminiKey, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{
+                    parts: [
+                        { text: prompt },
+                        {
+                            inline_data: {
+                                mime_type: 'image/png',
+                                data: image
+                            }
+                        }
+                    ]
+                }],
+                generationConfig: {
+                    temperature: 0.1,
+                    maxOutputTokens: 500
+                }
+            })
+        });
+
+        if (!response.ok) {
+            const err = await response.text();
+            console.error('❌ Gemini Vision error:', err);
+            return res.status(500).json({ error: `Vision API error: ${response.status}` });
+        }
+
+        const data = await response.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+        console.log('📝 Vision response:', text.substring(0, 200));
+
+        // Parse JSON from response
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            const result = JSON.parse(jsonMatch[0]);
+            console.log('✅ Vision analysis:', result);
+            return res.json(result);
+        }
+
+        res.json({ found: false, error: 'Could not parse vision response', raw: text });
+
+    } catch (error) {
+        console.error('❌ Vision error:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // ============================================
 // Socket.io Connection Handling
 // ============================================
