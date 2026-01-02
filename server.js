@@ -365,7 +365,7 @@ Be precise with coordinates - estimate the CENTER of the clickable element.`;
                         { text: prompt },
                         {
                             inline_data: {
-                                mime_type: 'image/png',
+                                mime_type: 'image/jpeg',
                                 data: image
                             }
                         }
