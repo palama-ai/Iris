@@ -320,7 +320,7 @@ app.post('/api/generate', async (req, res) => {
     }
 });
 
-// Vision Analysis endpoint - for screenshot-based automation
+// Vision Analysis endpoint - for screenshot-based automation (using Groq Llama Vision)
 app.post('/api/vision/analyze', async (req, res) => {
     const { image, task } = req.body;
 
@@ -328,9 +328,9 @@ app.post('/api/vision/analyze', async (req, res) => {
         return res.status(400).json({ error: 'Image and task are required' });
     }
 
-    const geminiKey = process.env.GEMINI_API_KEY;
-    if (!geminiKey) {
-        return res.status(500).json({ error: 'GEMINI_API_KEY not configured for vision' });
+    const groqKey = process.env.GROQ_API_KEY;
+    if (!groqKey) {
+        return res.status(500).json({ error: 'GROQ_API_KEY not configured for vision' });
     }
 
     console.log('🔍 Vision analysis request:', task);
@@ -356,36 +356,41 @@ If you can't find the element, set found=false and explain in element field.
 Be precise with coordinates - estimate the CENTER of the clickable element.`;
 
     try {
-        const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + geminiKey, {
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${groqKey}`
+            },
             body: JSON.stringify({
-                contents: [{
-                    parts: [
-                        { text: prompt },
-                        {
-                            inline_data: {
-                                mime_type: 'image/jpeg',
-                                data: image
+                model: 'llama-3.2-90b-vision-preview',
+                messages: [
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: prompt },
+                            {
+                                type: 'image_url',
+                                image_url: {
+                                    url: `data:image/jpeg;base64,${image}`
+                                }
                             }
-                        }
-                    ]
-                }],
-                generationConfig: {
-                    temperature: 0.1,
-                    maxOutputTokens: 500
-                }
+                        ]
+                    }
+                ],
+                max_tokens: 500,
+                temperature: 0.1
             })
         });
 
         if (!response.ok) {
             const err = await response.text();
-            console.error('❌ Gemini Vision error:', err);
+            console.error('❌ Groq Vision error:', err);
             return res.status(500).json({ error: `Vision API error: ${response.status}` });
         }
 
         const data = await response.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const text = data.choices?.[0]?.message?.content || '';
 
         console.log('📝 Vision response:', text.substring(0, 200));
 
