@@ -380,7 +380,7 @@ Be precise with coordinates - estimate the CENTER of the clickable element.`;
                 'Authorization': `Bearer ${groqKey}`
             },
             body: JSON.stringify({
-                model: 'llama-3.2-90b-vision-preview',
+                model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
                 messages: [
                     {
                         role: 'user',
