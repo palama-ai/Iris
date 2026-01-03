@@ -548,6 +548,102 @@ app.get('/api/learning/failure-patterns', async (req, res) => {
 });
 
 // ============================================
+// AI Reasoning with Groq Qwen3-32B
+// ============================================
+
+app.post('/api/reasoning/analyze', async (req, res) => {
+    const { prompt, context } = req.body;
+
+    if (!prompt) {
+        return res.status(400).json({ error: 'Prompt is required' });
+    }
+
+    const groqKey = process.env.GROQ_API_KEY;
+    if (!groqKey) {
+        return res.status(500).json({ error: 'GROQ_API_KEY not configured' });
+    }
+
+    console.log('🧠 AI Reasoning request using Qwen3-32B:', prompt.substring(0, 100) + '...');
+
+    try {
+        const systemPrompt = `أنت IRIS، وكيل ذكاء اصطناعي فائق القدرة للأتمتة البرمجية.
+        
+مهمتك هي التفكير بشكل منطقي متسلسل (Chain-of-Thought) لاتخاذ أفضل القرارات.
+
+قواعدك:
+1. حلل الموقف بعمق قبل اتخاذ أي قرار
+2. استخدم التجارب السابقة المتاحة في السياق
+3. قدم تحليلاً مختصراً ثم قراراً واضحاً
+4. اقترح حلولاً بديلة عند الحاجة
+
+السياق الحالي:
+- المهمة: ${context?.task || 'غير محدد'}
+- الموقع: ${context?.site || 'غير محدد'}
+- الأفكار السابقة: ${context?.previousThoughts?.join(' → ') || 'لا توجد'}
+
+أجب بصيغة JSON:
+{
+    "thinking": "تحليلك المنطقي المختصر",
+    "decision": "قرارك النهائي",
+    "confidence": 0.0-1.0,
+    "alternative": "خطة بديلة إن وجدت"
+}`;
+
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${groqKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'qwen/qwen3-32b',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: prompt }
+                ],
+                max_tokens: 500,
+                temperature: 0.3 // Low for more focused reasoning
+            })
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            console.error('❌ Groq Qwen3 error:', response.status, errText);
+            return res.status(response.status).json({
+                error: `AI Reasoning error: ${response.status}`,
+                details: errText
+            });
+        }
+
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content || '';
+
+        console.log('💭 Qwen3 response:', content.substring(0, 200));
+
+        // Try to parse JSON response
+        try {
+            const jsonMatch = content.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const parsed = JSON.parse(jsonMatch[0]);
+                return res.json(parsed);
+            }
+        } catch (e) {
+            // If not JSON, return as plain thinking
+        }
+
+        res.json({
+            thinking: content,
+            decision: 'See thinking for analysis',
+            confidence: 0.7
+        });
+
+    } catch (error) {
+        console.error('❌ AI Reasoning failed:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================
 // Socket.io Connection Handling
 // ============================================
 
