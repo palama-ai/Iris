@@ -2,6 +2,7 @@
  * IRIS Learning Service
  * Handles all NeonDB interactions for the Intelligence Engine
  * Provides memory, learning, and pattern analysis capabilities
+ * Uses @neondatabase/serverless for database connection
  */
 
 import { neon } from '@neondatabase/serverless';
@@ -26,48 +27,48 @@ function getDb() {
  * Used by reasoning engine before executing any action
  */
 async function queryPastExperiences(site, taskType) {
-    const db = getPool();
+    const db = getDb();
     if (!db) return getDefaultExperience();
 
     try {
         // Get success rate
-        const statsResult = await db.query(`
+        const statsResult = await db`
             SELECT 
                 COUNT(*) as total,
                 COUNT(*) FILTER (WHERE status = 'success') as successes,
                 AVG(execution_time_ms) as avg_time
             FROM automation_logs
-            WHERE site = $1 AND task_type = $2
+            WHERE site = ${site} AND task_type = ${taskType}
             AND created_at > NOW() - INTERVAL '30 days'
-        `, [site, taskType]);
+        `;
 
         // Get cached coordinates
-        const cacheResult = await db.query(`
+        const cacheResult = await db`
             SELECT element_name, last_coordinates, confidence, success_count
             FROM element_cache
-            WHERE site = $1 AND confidence > 0.5
+            WHERE site = ${site} AND confidence > 0.5
             ORDER BY success_count DESC
-        `, [site]);
+        `;
 
         // Get common errors
-        const errorsResult = await db.query(`
+        const errorsResult = await db`
             SELECT error_type, occurrence_count, suggested_fix
             FROM failure_patterns
-            WHERE site = $1 AND (task_type = $2 OR task_type IS NULL)
+            WHERE site = ${site} AND (task_type = ${taskType} OR task_type IS NULL)
             ORDER BY occurrence_count DESC
             LIMIT 5
-        `, [site, taskType]);
+        `;
 
         // Get last successful approach
-        const lastSuccessResult = await db.query(`
+        const lastSuccessResult = await db`
             SELECT solution_applied, coordinates_used, selectors_used
             FROM automation_logs
-            WHERE site = $1 AND task_type = $2 AND status = 'success'
+            WHERE site = ${site} AND task_type = ${taskType} AND status = 'success'
             ORDER BY created_at DESC
             LIMIT 1
-        `, [site, taskType]);
+        `;
 
-        const stats = statsResult.rows[0] || { total: 0, successes: 0, avg_time: 0 };
+        const stats = statsResult[0] || { total: 0, successes: 0, avg_time: 0 };
         const successRate = stats.total > 0 ? (stats.successes / stats.total) * 100 : 0;
 
         return {
@@ -75,7 +76,7 @@ async function queryPastExperiences(site, taskType) {
             successRate: Math.round(successRate),
             totalAttempts: parseInt(stats.total),
             avgExecutionTime: Math.round(stats.avg_time || 0),
-            cachedElements: cacheResult.rows.reduce((acc, row) => {
+            cachedElements: cacheResult.reduce((acc, row) => {
                 acc[row.element_name] = {
                     coordinates: row.last_coordinates,
                     confidence: parseFloat(row.confidence),
@@ -83,12 +84,12 @@ async function queryPastExperiences(site, taskType) {
                 };
                 return acc;
             }, {}),
-            commonErrors: errorsResult.rows.map(row => ({
+            commonErrors: errorsResult.map(row => ({
                 type: row.error_type,
                 count: row.occurrence_count,
                 suggestedFix: row.suggested_fix
             })),
-            lastSuccessfulApproach: lastSuccessResult.rows[0] || null
+            lastSuccessfulApproach: lastSuccessResult[0] || null
         };
     } catch (error) {
         console.error('❌ Learning query failed:', error.message);
@@ -100,7 +101,7 @@ async function queryPastExperiences(site, taskType) {
  * Log task result for future learning
  */
 async function logTaskResult(taskData) {
-    const db = getPool();
+    const db = getDb();
     if (!db) return false;
 
     const {
@@ -119,28 +120,20 @@ async function logTaskResult(taskData) {
     } = taskData;
 
     try {
-        await db.query(`
+        await db`
             INSERT INTO automation_logs 
             (task_type, site, status, error_message, error_code, 
              coordinates_used, selectors_used, solution_applied,
              execution_time_ms, screenshot_size_kb, vision_api_used, thinking_log)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-        `, [
-            taskType, site, status, errorMessage, errorCode,
-            coordinatesUsed ? JSON.stringify(coordinatesUsed) : null,
-            selectorsUsed,
-            solutionApplied,
-            executionTimeMs,
-            screenshotSizeKb,
-            visionApiUsed,
-            thinkingLog
-        ]);
-
-        // If failed, log failure pattern
-        if (status === 'failed' && errorCode) {
-            await db.query(`SELECT log_failure_pattern($1, $2, $3, $4)`,
-                [site, taskType, errorCode, errorMessage]);
-        }
+            VALUES (${taskType}, ${site}, ${status}, ${errorMessage}, ${errorCode},
+             ${coordinatesUsed ? JSON.stringify(coordinatesUsed) : null},
+             ${selectorsUsed},
+             ${solutionApplied},
+             ${executionTimeMs},
+             ${screenshotSizeKb},
+             ${visionApiUsed},
+             ${thinkingLog})
+        `;
 
         console.log(`📚 Logged ${status} result for ${taskType} on ${site}`);
         return true;
@@ -154,7 +147,7 @@ async function logTaskResult(taskData) {
  * Update element cache after successful interaction
  */
 async function updateElementCache(site, elementName, coordinates, options = {}) {
-    const db = getPool();
+    const db = getDb();
     if (!db) return false;
 
     const {
@@ -165,11 +158,12 @@ async function updateElementCache(site, elementName, coordinates, options = {}) 
     } = options;
 
     try {
-        await db.query(`
+        await db`
             INSERT INTO element_cache 
             (site, page_url, element_name, element_type, selector, 
              last_coordinates, viewport_size, success_count, last_success)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 1, NOW())
+            VALUES (${site}, ${pageUrl}, ${elementName}, ${elementType}, ${selector}, 
+                    ${JSON.stringify(coordinates)}, ${viewportSize ? JSON.stringify(viewportSize) : null}, 1, NOW())
             ON CONFLICT (site, element_name) DO UPDATE SET
                 last_coordinates = EXCLUDED.last_coordinates,
                 viewport_size = EXCLUDED.viewport_size,
@@ -177,8 +171,7 @@ async function updateElementCache(site, elementName, coordinates, options = {}) 
                 confidence = LEAST(1.0, element_cache.confidence + 0.05),
                 last_success = NOW(),
                 updated_at = NOW()
-        `, [site, pageUrl, elementName, elementType, selector,
-            JSON.stringify(coordinates), viewportSize ? JSON.stringify(viewportSize) : null]);
+        `;
 
         console.log(`🎯 Cached ${elementName} at (${coordinates.x}, ${coordinates.y}) for ${site}`);
         return true;
@@ -192,18 +185,18 @@ async function updateElementCache(site, elementName, coordinates, options = {}) 
  * Mark cached element as failed (reduce confidence)
  */
 async function markCacheMiss(site, elementName) {
-    const db = getPool();
+    const db = getDb();
     if (!db) return;
 
     try {
-        await db.query(`
+        await db`
             UPDATE element_cache SET
                 fail_count = fail_count + 1,
                 confidence = GREATEST(0, confidence - 0.2),
                 last_failure = NOW(),
                 updated_at = NOW()
-            WHERE site = $1 AND element_name = $2
-        `, [site, elementName]);
+            WHERE site = ${site} AND element_name = ${elementName}
+        `;
     } catch (error) {
         console.error('❌ Failed to mark cache miss:', error.message);
     }
@@ -213,18 +206,18 @@ async function markCacheMiss(site, elementName) {
  * Get cached coordinates for an element
  */
 async function getCachedCoordinates(site, elementName) {
-    const db = getPool();
+    const db = getDb();
     if (!db) return null;
 
     try {
-        const result = await db.query(`
+        const result = await db`
             SELECT last_coordinates, confidence, success_count
             FROM element_cache
-            WHERE site = $1 AND element_name = $2 AND confidence > 0.3
-        `, [site, elementName]);
+            WHERE site = ${site} AND element_name = ${elementName} AND confidence > 0.3
+        `;
 
-        if (result.rows.length > 0) {
-            const row = result.rows[0];
+        if (result.length > 0) {
+            const row = result[0];
             return {
                 coordinates: row.last_coordinates,
                 confidence: parseFloat(row.confidence),
@@ -242,21 +235,30 @@ async function getCachedCoordinates(site, elementName) {
  * Get failure patterns for analysis
  */
 async function getFailurePatterns(site = null, limit = 10) {
-    const db = getPool();
+    const db = getDb();
     if (!db) return [];
 
     try {
-        let query = `
-            SELECT site, task_type, error_type, error_message_pattern,
-                   occurrence_count, last_occurrence, suggested_fix, auto_adjustments
-            FROM failure_patterns
-            ${site ? 'WHERE site = $1' : ''}
-            ORDER BY occurrence_count DESC
-            LIMIT ${limit}
-        `;
-
-        const result = await db.query(query, site ? [site] : []);
-        return result.rows;
+        let result;
+        if (site) {
+            result = await db`
+                SELECT site, task_type, error_type, error_message_pattern,
+                       occurrence_count, last_occurrence, suggested_fix, auto_adjustments
+                FROM failure_patterns
+                WHERE site = ${site}
+                ORDER BY occurrence_count DESC
+                LIMIT ${limit}
+            `;
+        } else {
+            result = await db`
+                SELECT site, task_type, error_type, error_message_pattern,
+                       occurrence_count, last_occurrence, suggested_fix, auto_adjustments
+                FROM failure_patterns
+                ORDER BY occurrence_count DESC
+                LIMIT ${limit}
+            `;
+        }
+        return result;
     } catch (error) {
         console.error('❌ Failed to get failure patterns:', error.message);
         return [];
@@ -267,12 +269,12 @@ async function getFailurePatterns(site = null, limit = 10) {
  * Generate weekly analysis report
  */
 async function generateWeeklyReport() {
-    const db = getPool();
+    const db = getDb();
     if (!db) return { error: 'Database not available' };
 
     try {
         // Total stats
-        const totalStats = await db.query(`
+        const totalStats = await db`
             SELECT 
                 COUNT(*) as total_tasks,
                 COUNT(*) FILTER (WHERE status = 'success') as successes,
@@ -280,19 +282,19 @@ async function generateWeeklyReport() {
                 COUNT(DISTINCT site) as sites_used
             FROM automation_logs
             WHERE created_at > NOW() - INTERVAL '7 days'
-        `);
+        `;
 
         // Top failures
-        const topFailures = await db.query(`
+        const topFailures = await db`
             SELECT site, error_type, occurrence_count, suggested_fix
             FROM failure_patterns
             WHERE last_occurrence > NOW() - INTERVAL '7 days'
             ORDER BY occurrence_count DESC
             LIMIT 5
-        `);
+        `;
 
         // Site performance
-        const sitePerformance = await db.query(`
+        const sitePerformance = await db`
             SELECT site, 
                    COUNT(*) as attempts,
                    ROUND(AVG(CASE WHEN status = 'success' THEN 100 ELSE 0 END)) as success_rate
@@ -300,9 +302,9 @@ async function generateWeeklyReport() {
             WHERE created_at > NOW() - INTERVAL '7 days'
             GROUP BY site
             ORDER BY attempts DESC
-        `);
+        `;
 
-        const stats = totalStats.rows[0];
+        const stats = totalStats[0] || { total_tasks: 0, successes: 0, failures: 0, sites_used: 0 };
         const successRate = stats.total_tasks > 0
             ? Math.round((stats.successes / stats.total_tasks) * 100)
             : 0;
@@ -316,14 +318,14 @@ async function generateWeeklyReport() {
                 successRate: successRate,
                 sitesUsed: parseInt(stats.sites_used)
             },
-            topIssues: topFailures.rows.map(row => ({
+            topIssues: topFailures.map(row => ({
                 site: row.site,
                 issue: row.error_type,
                 count: row.occurrence_count,
                 suggestion: row.suggested_fix || 'No suggestion yet'
             })),
-            sitePerformance: sitePerformance.rows,
-            recommendations: generateRecommendations(topFailures.rows)
+            sitePerformance: sitePerformance,
+            recommendations: generateRecommendations(topFailures)
         };
     } catch (error) {
         console.error('❌ Failed to generate report:', error.message);
@@ -338,21 +340,21 @@ function generateRecommendations(failures) {
     const recommendations = [];
 
     for (const failure of failures) {
-        if (failure.error_type.includes('timeout')) {
+        if (failure.error_type?.includes('timeout')) {
             recommendations.push({
                 issue: `Timeout errors on ${failure.site}`,
                 action: 'Increase page load timeout from 10s to 15s',
                 code: 'await page.waitForTimeout(15000)'
             });
         }
-        if (failure.error_type.includes('413') || failure.error_type.includes('large')) {
+        if (failure.error_type?.includes('413') || failure.error_type?.includes('large')) {
             recommendations.push({
                 issue: `Large screenshot errors on ${failure.site}`,
                 action: 'Reduce screenshot quality to 25%',
                 code: 'quality: 25'
             });
         }
-        if (failure.error_type.includes('selector')) {
+        if (failure.error_type?.includes('selector')) {
             recommendations.push({
                 issue: `Selector failures on ${failure.site}`,
                 action: 'Use vision-first approach instead of selectors',
