@@ -355,6 +355,22 @@ Respond in JSON format ONLY:
 If you can't find the element, set found=false and explain in element field.
 Be precise with coordinates - estimate the CENTER of the clickable element.`;
 
+    // Validate image size (Groq has limits)
+    const imageSizeKB = Math.round(image.length / 1024);
+    console.log('📏 Image size:', imageSizeKB, 'KB');
+
+    if (imageSizeKB < 5) {
+        console.error('❌ Image too small - likely a blank/empty screenshot');
+        return res.status(400).json({
+            error: 'Image too small - browser may be on a blank page',
+            sizeKB: imageSizeKB
+        });
+    }
+
+    if (imageSizeKB > 500) {
+        console.warn('⚠️ Image is large, may fail. Size:', imageSizeKB, 'KB');
+    }
+
     try {
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -384,9 +400,23 @@ Be precise with coordinates - estimate the CENTER of the clickable element.`;
         });
 
         if (!response.ok) {
-            const err = await response.text();
-            console.error('❌ Groq Vision error:', err);
-            return res.status(500).json({ error: `Vision API error: ${response.status}` });
+            const errText = await response.text();
+            console.error('❌ Groq Vision error status:', response.status);
+            console.error('❌ Groq Vision error body:', errText);
+
+            // Parse error for more details
+            try {
+                const errJson = JSON.parse(errText);
+                return res.status(response.status).json({
+                    error: `Vision API error: ${response.status}`,
+                    details: errJson.error?.message || errText
+                });
+            } catch (e) {
+                return res.status(response.status).json({
+                    error: `Vision API error: ${response.status}`,
+                    details: errText
+                });
+            }
         }
 
         const data = await response.json();
