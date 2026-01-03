@@ -29,6 +29,7 @@ import { validateCommand, createDesktopPayload, parseNaturalCommand } from './ut
 import { logCommand, logEvent, getRecentLogs } from './utils/logger.js';
 import appsRouter from './routes/apps.js';
 import { searchApp } from './config/database.js';
+import * as learningService from './services/learningService.js';
 
 // Configuration
 const PORT = process.env.PORT || 3000;
@@ -379,7 +380,7 @@ Be precise with coordinates - estimate the CENTER of the clickable element.`;
                 'Authorization': `Bearer ${groqKey}`
             },
             body: JSON.stringify({
-                model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+                model: 'llama-3.2-90b-vision-preview',
                 messages: [
                     {
                         role: 'user',
@@ -436,6 +437,112 @@ Be precise with coordinates - estimate the CENTER of the clickable element.`;
 
     } catch (error) {
         console.error('❌ Vision error:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================
+// Learning API - IRIS Intelligence Engine
+// ============================================
+
+// Get past experiences for a site/task
+app.post('/api/learning/experiences', async (req, res) => {
+    try {
+        const { site, taskType } = req.body;
+        if (!site || !taskType) {
+            return res.status(400).json({ error: 'site and taskType are required' });
+        }
+
+        const experiences = await learningService.queryPastExperiences(site, taskType);
+        res.json(experiences);
+    } catch (error) {
+        console.error('Learning experiences error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Log successful task
+app.post('/api/learning/log-success', async (req, res) => {
+    try {
+        const { site, task, elementName, coordinates, method, executionTime, thinkingLog } = req.body;
+
+        await learningService.logTaskResult({
+            taskType: task,
+            site,
+            status: 'success',
+            coordinatesUsed: coordinates,
+            solutionApplied: method,
+            executionTimeMs: executionTime,
+            thinkingLog: thinkingLog || []
+        });
+
+        if (elementName && coordinates) {
+            await learningService.updateElementCache(site, elementName, coordinates);
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Log success error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Log failed task
+app.post('/api/learning/log-failure', async (req, res) => {
+    try {
+        const { site, task, errorType, errorMessage, suggestedFix } = req.body;
+
+        await learningService.logTaskResult({
+            taskType: task,
+            site,
+            status: 'failed',
+            errorCode: errorType,
+            errorMessage,
+            solutionApplied: suggestedFix
+        });
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Log failure error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Update element cache (for self-calibration)
+app.post('/api/learning/update-cache', async (req, res) => {
+    try {
+        const { site, elementName, coordinates, options } = req.body;
+        if (!site || !elementName || !coordinates) {
+            return res.status(400).json({ error: 'site, elementName, and coordinates required' });
+        }
+
+        await learningService.updateElementCache(site, elementName, coordinates, options || {});
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Cache update error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get weekly analysis report
+app.get('/api/learning/weekly-report', async (req, res) => {
+    try {
+        const report = await learningService.generateWeeklyReport();
+        res.json(report);
+    } catch (error) {
+        console.error('Weekly report error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get failure patterns for a site
+app.get('/api/learning/failure-patterns', async (req, res) => {
+    try {
+        const { site } = req.query;
+        const patterns = await learningService.getFailurePatterns(site || null);
+        res.json(patterns);
+    } catch (error) {
+        console.error('Failure patterns error:', error);
         res.status(500).json({ error: error.message });
     }
 });
