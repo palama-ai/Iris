@@ -4,26 +4,21 @@
  * Provides memory, learning, and pattern analysis capabilities
  */
 
-import pg from 'pg';
-const { Pool } = pg;
+import { neon } from '@neondatabase/serverless';
 
-// Database connection pool
-let pool = null;
+// Database connection
+let sql = null;
 
-function getPool() {
-    if (!pool) {
+function getDb() {
+    if (!sql) {
         const connectionString = process.env.DATABASE_URL;
         if (!connectionString) {
             console.warn('⚠️ DATABASE_URL not set - Learning features disabled');
             return null;
         }
-        pool = new Pool({
-            connectionString,
-            ssl: { rejectUnauthorized: false },
-            max: 5
-        });
+        sql = neon(connectionString);
     }
-    return pool;
+    return sql;
 }
 
 /**
