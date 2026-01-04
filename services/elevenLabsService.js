@@ -77,7 +77,7 @@ export async function textToSpeechStream(text, onChunk, onComplete, onError) {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                model: 'playai-tts',
+                model: 'canopylabs/orpheus-v1-english',
                 input: text,
                 voice: voiceId,
                 response_format: 'mp3'
