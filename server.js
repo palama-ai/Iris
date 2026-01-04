@@ -104,7 +104,7 @@ function isDesktopConnected() {
  * @param {Socket} socket - Socket to send to
  */
 async function sendDesktopNotConnectedMessage(socket) {
-    const message = 'سيدي، نظام الكمبيوتر غير متصل حالياً. لا يمكنني تنفيذ هذا الأمر.';
+    const message = 'Sir, the desktop system is not connected. I cannot execute this command.';
 
     socket.emit('message:response', {
         text: message,
@@ -279,7 +279,7 @@ app.post('/api/generate', async (req, res) => {
                     'Authorization': `Bearer ${groqKey}`
                 },
                 body: JSON.stringify({
-                    model: 'openai/gpt-oss-120b',
+                    model: 'llama-3.3-70b-versatile',
                     messages: [
                         { role: 'system', content: 'You are a helpful assistant that generates social media content. Keep it professional and engaging.' },
                         { role: 'user', content: prompt }
@@ -380,7 +380,7 @@ Be precise with coordinates - estimate the CENTER of the clickable element.`;
                 'Authorization': `Bearer ${groqKey}`
             },
             body: JSON.stringify({
-                model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+                model: 'llama-3.2-90b-vision-preview',
                 messages: [
                     {
                         role: 'user',
@@ -566,27 +566,27 @@ app.post('/api/reasoning/analyze', async (req, res) => {
     console.log('🧠 AI Reasoning request using Qwen3-32B:', prompt.substring(0, 100) + '...');
 
     try {
-        const systemPrompt = `أنت IRIS، وكيل ذكاء اصطناعي فائق القدرة للأتمتة البرمجية.
+        const systemPrompt = `You are IRIS, a highly capable AI agent for software automation.
         
-مهمتك هي التفكير بشكل منطقي متسلسل (Chain-of-Thought) لاتخاذ أفضل القرارات.
+Your task is to think logically in a step-by-step manner (Chain-of-Thought) to make the best decisions.
 
-قواعدك:
-1. حلل الموقف بعمق قبل اتخاذ أي قرار
-2. استخدم التجارب السابقة المتاحة في السياق
-3. قدم تحليلاً مختصراً ثم قراراً واضحاً
-4. اقترح حلولاً بديلة عند الحاجة
+Your rules:
+1. Analyze the situation deeply before making any decision
+2. Use past experiences available in the context
+3. Provide a brief analysis then a clear decision
+4. Suggest alternative solutions when needed
 
-السياق الحالي:
-- المهمة: ${context?.task || 'غير محدد'}
-- الموقع: ${context?.site || 'غير محدد'}
-- الأفكار السابقة: ${context?.previousThoughts?.join(' → ') || 'لا توجد'}
+Current context:
+- Task: ${context?.task || 'Not specified'}
+- Site: ${context?.site || 'Not specified'}
+- Previous thoughts: ${context?.previousThoughts?.join(' → ') || 'None'}
 
-أجب بصيغة JSON:
+Respond in JSON format:
 {
-    "thinking": "تحليلك المنطقي المختصر",
-    "decision": "قرارك النهائي",
+    "thinking": "Your brief logical analysis",
+    "decision": "Your final decision",
     "confidence": 0.0-1.0,
-    "alternative": "خطة بديلة إن وجدت"
+    "alternative": "Alternative plan if any"
 }`;
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -670,7 +670,7 @@ io.on('connection', (socket) => {
         socket.emit('joined', {
             room: 'desktop_room',
             sessionId,
-            message: 'مرحباً! أنا IRIS، مساعدك الشخصي الذكي. نظام الكمبيوتر متصل وجاهز.'
+            message: 'Hello! I am IRIS, your intelligent personal assistant. Desktop system connected and ready.'
         });
 
         // Notify mobile clients that desktop is now connected
@@ -691,7 +691,7 @@ io.on('connection', (socket) => {
             room: 'mobile_room',
             sessionId,
             desktopConnected: isDesktopConnected(),
-            message: 'مرحباً سيدي! أنا IRIS. كيف يمكنني مساعدتك اليوم؟'
+            message: 'Hello sir! I am IRIS. How can I help you today?'
         });
     });
 
@@ -888,7 +888,7 @@ io.on('connection', (socket) => {
             if (!transcribedText) {
                 console.log('⚠️ No speech detected in audio');
                 socket.emit('message:response', {
-                    text: 'لم أسمع شيئاً. هل يمكنك التحدث مرة أخرى؟',
+                    text: 'I didn\'t hear anything. Could you please speak again?',
                     action: null
                 });
                 return;
@@ -1029,7 +1029,7 @@ io.on('connection', (socket) => {
 
             // Send voice response if requested
             if (isElevenLabsConfigured() && withVoice && result.success) {
-                const message = 'تم تنفيذ المهمة بنجاح سيدي.';
+                const message = 'Task completed successfully, sir.';
                 streamVoiceToSocket(socket, message);
             }
         } catch (error) {
