@@ -10,25 +10,7 @@ let voiceId = null;
 
 // Available Groq TTS voices
 const GROQ_VOICES = [
-    'Arista-PlayAI',
-    'Atlas-PlayAI',
-    'Basil-PlayAI',
-    'Briggs-PlayAI',
-    'Calum-PlayAI',
-    'Celeste-PlayAI',
-    'Cheyenne-PlayAI',
-    'Chip-PlayAI',
-    'Cillian-PlayAI',
-    'Deedee-PlayAI',
-    'Fritz-PlayAI',
-    'Gail-PlayAI',
-    'Indigo-PlayAI',
-    'Mamaw-PlayAI',
-    'Mason-PlayAI',
-    'Mikail-PlayAI',
-    'Mitch-PlayAI',
-    'Quinn-PlayAI',
-    'Thunder-PlayAI'
+    'hannah'
 ];
 
 /**
