@@ -279,7 +279,7 @@ app.post('/api/generate', async (req, res) => {
                     'Authorization': `Bearer ${groqKey}`
                 },
                 body: JSON.stringify({
-                    model: 'llama-3.3-70b-versatile',
+                    model: 'openai/gpt-oss-120b',
                     messages: [
                         { role: 'system', content: 'You are a helpful assistant that generates social media content. Keep it professional and engaging.' },
                         { role: 'user', content: prompt }
@@ -380,7 +380,7 @@ Be precise with coordinates - estimate the CENTER of the clickable element.`;
                 'Authorization': `Bearer ${groqKey}`
             },
             body: JSON.stringify({
-                model: 'llama-3.2-90b-vision-preview',
+                model: 'meta-llama/llama-4-scout-17b-16e-instruct',
                 messages: [
                     {
                         role: 'user',
