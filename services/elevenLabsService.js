@@ -18,7 +18,7 @@ const GROQ_VOICES = [
  */
 export function initElevenLabs() {
     apiKey = process.env.GROQ_API_KEY;
-    voiceId = process.env.GROQ_TTS_VOICE || 'Fritz-PlayAI'; // Default voice
+    voiceId = process.env.GROQ_TTS_VOICE || 'diana'; // Default voice
 
     if (!apiKey) {
         console.warn('⚠️  GROQ_API_KEY not set. Voice synthesis disabled.');
