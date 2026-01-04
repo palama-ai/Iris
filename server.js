@@ -380,7 +380,7 @@ Be precise with coordinates - estimate the CENTER of the clickable element.`;
                 'Authorization': `Bearer ${groqKey}`
             },
             body: JSON.stringify({
-                model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+                model: 'llama-3.2-90b-vision-preview',
                 messages: [
                     {
                         role: 'user',
@@ -548,7 +548,7 @@ app.get('/api/learning/failure-patterns', async (req, res) => {
 });
 
 // ============================================
-// AI Reasoning with Groq gpt-oss-120b
+// AI Reasoning with Groq Qwen3-32B
 // ============================================
 
 app.post('/api/reasoning/analyze', async (req, res) => {
@@ -563,7 +563,7 @@ app.post('/api/reasoning/analyze', async (req, res) => {
         return res.status(500).json({ error: 'GROQ_API_KEY not configured' });
     }
 
-    console.log('🧠 AI Reasoning request using gpt-oss-120b:', prompt.substring(0, 100) + '...');
+    console.log('🧠 AI Reasoning request using Qwen3-32B:', prompt.substring(0, 100) + '...');
 
     try {
         const systemPrompt = `أنت IRIS، وكيل ذكاء اصطناعي فائق القدرة للأتمتة البرمجية.
@@ -835,11 +835,134 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Voice message (audio data)
+    // Voice message (audio data) - with Groq Whisper STT
     socket.on('message:voice', async (data) => {
         socket.emit('voice:processing', { status: 'received' });
         console.log(`🎤 Voice message received from ${deviceType}`);
-        // TODO: Implement Speech-to-Text when available
+
+        const { audio, format = 'wav' } = data;
+        if (!audio || !sessionId) {
+            socket.emit('error', { message: 'Invalid audio data or session' });
+            return;
+        }
+
+        const groqKey = process.env.GROQ_API_KEY;
+        if (!groqKey) {
+            socket.emit('error', { message: 'Speech-to-Text not configured (GROQ_API_KEY missing)' });
+            return;
+        }
+
+        try {
+            // Convert base64 to buffer
+            const audioBuffer = Buffer.from(audio, 'base64');
+            console.log(`📦 Audio size: ${Math.round(audioBuffer.length / 1024)}KB`);
+
+            // Create form data for Whisper API
+            const formData = new FormData();
+            const audioBlob = new Blob([audioBuffer], { type: `audio/${format}` });
+            formData.append('file', audioBlob, `audio.${format}`);
+            formData.append('model', 'whisper-large-v3');
+            formData.append('language', 'ar'); // Arabic by default, can be auto-detected
+
+            socket.emit('voice:processing', { status: 'transcribing' });
+
+            // Call Groq Whisper API
+            const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${groqKey}`
+                },
+                body: formData
+            });
+
+            if (!response.ok) {
+                const errText = await response.text();
+                console.error('❌ Whisper STT error:', response.status, errText);
+                socket.emit('error', { message: `Speech-to-Text failed: ${response.status}` });
+                return;
+            }
+
+            const result = await response.json();
+            const transcribedText = result.text?.trim();
+
+            if (!transcribedText) {
+                console.log('⚠️ No speech detected in audio');
+                socket.emit('message:response', {
+                    text: 'لم أسمع شيئاً. هل يمكنك التحدث مرة أخرى؟',
+                    action: null
+                });
+                return;
+            }
+
+            console.log(`📝 Transcribed: "${transcribedText}"`);
+            socket.emit('voice:processing', { status: 'processing', text: transcribedText });
+
+            // Process the transcribed text like a regular text message
+            const history = await getHistory(sessionId, 10);
+            let aiResponse = await processMessage(transcribedText, history, sessionId);
+
+            // Fallback to natural language parsing
+            if (!aiResponse.action && !aiResponse.error) {
+                const naturalCommand = parseNaturalCommand(transcribedText);
+                if (naturalCommand) {
+                    aiResponse = naturalCommand;
+                }
+            }
+
+            // Save to history
+            await saveMessage(sessionId, 'user', transcribedText);
+            await saveMessage(sessionId, 'assistant', aiResponse.reply);
+
+            // Handle EXECUTE commands
+            if (aiResponse.action === 'EXECUTE') {
+                const validation = validateCommand(aiResponse);
+                if (validation.valid && isDesktopConnected()) {
+                    if (aiResponse.command === 'OPEN_APP' && aiResponse.params.name && !aiResponse.params.path) {
+                        const dbApp = await searchApp(aiResponse.params.name);
+                        if (dbApp) {
+                            aiResponse.params.path = dbApp.path;
+                        }
+                    }
+                    const payload = createDesktopPayload(aiResponse);
+                    io.to('desktop_room').emit('command:execute', payload);
+                    console.log(`⚡ Voice command sent to desktop: ${aiResponse.command}`);
+                    logCommand(aiResponse.command, aiResponse.params, deviceType, sessionId);
+                }
+            }
+
+            // Handle COMPLEX_TASK
+            if (aiResponse.action === 'COMPLEX_TASK' && isDesktopConnected()) {
+                const complexPayload = {
+                    type: 'EXECUTE_COMMAND',
+                    command: 'COMPLEX_TASK',
+                    params: {
+                        description: aiResponse.description,
+                        tool: aiResponse.tool || 'browser'
+                    },
+                    timestamp: Date.now()
+                };
+                io.to('desktop_room').emit('command:execute', complexPayload);
+                console.log(`📤 Voice complex task sent to desktop: ${aiResponse.description}`);
+            }
+
+            // Send response back
+            socket.emit('message:response', {
+                text: aiResponse.reply,
+                action: aiResponse.action,
+                command: aiResponse.command,
+                transcribedText,
+                timestamp: Date.now()
+            });
+
+            // Generate voice response
+            if (isElevenLabsConfigured()) {
+                streamVoiceToSocket(socket, aiResponse.reply);
+            }
+
+        } catch (error) {
+            console.error('❌ Voice processing error:', error);
+            socket.emit('error', { message: `Voice error: ${error.message}` });
+        }
     });
 
     // ----------------------------------------
