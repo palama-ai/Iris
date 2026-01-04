@@ -1,25 +1,19 @@
 /**
  * IRIS Backend - ElevenLabs Voice Service
- * Handles text-to-speech conversion using ElevenLabs API with streaming support
+ * Handles text-to-speech conversion using official ElevenLabs SDK
  */
 
-import WebSocket from 'ws';
+import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 
-let apiKey = null;
+let client = null;
 let voiceId = null;
-let agentId = null;
-
-// ElevenLabs WebSocket endpoints
-const ELEVENLABS_WS_URL = 'wss://api.elevenlabs.io/v1/text-to-speech';
-const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1';
 
 /**
  * Initialize ElevenLabs service
  */
 export function initElevenLabs() {
-    apiKey = process.env.ELEVENLABS_API_KEY;
+    const apiKey = process.env.ELEVENLABS_API_KEY;
     voiceId = process.env.ELEVENLABS_VOICE_ID;
-    agentId = process.env.ELEVENLABS_AGENT_ID;
 
     if (!apiKey) {
         console.warn('⚠️  ELEVENLABS_API_KEY not set. Voice synthesis disabled.');
@@ -31,7 +25,8 @@ export function initElevenLabs() {
         voiceId = '21m00Tcm4TlvDq8ikWAM'; // Rachel - default voice
     }
 
-    console.log('✅ ElevenLabs service initialized');
+    client = new ElevenLabsClient({ apiKey });
+    console.log('✅ ElevenLabs service initialized (Official SDK)');
     return true;
 }
 
@@ -40,28 +35,15 @@ export function initElevenLabs() {
  * @returns {Object} Signed URL and configuration
  */
 export async function getSignedUrl() {
-    if (!apiKey || !agentId) {
+    const agentId = process.env.ELEVENLABS_AGENT_ID;
+    if (!client || !agentId) {
         return { error: 'ElevenLabs not configured' };
     }
 
     try {
-        const response = await fetch(
-            `${ELEVENLABS_API_URL}/convai/conversation/get_signed_url?agent_id=${agentId}`,
-            {
-                method: 'GET',
-                headers: {
-                    'xi-api-key': apiKey
-                }
-            }
-        );
-
-        if (!response.ok) {
-            throw new Error(`API error: ${response.status}`);
-        }
-
-        const data = await response.json();
+        const response = await client.convai.conversation.getSignedUrl({ agentId });
         return {
-            signedUrl: data.signed_url,
+            signedUrl: response.signedUrl,
             agentId: agentId
         };
     } catch (error) {
@@ -71,240 +53,87 @@ export async function getSignedUrl() {
 }
 
 /**
- * Convert text to speech with real-time streaming via callback
- * Each audio chunk is sent immediately to reduce latency
+ * Convert text to speech with streaming via callback
  * @param {string} text - Text to convert
- * @param {Function} onChunk - Callback for each audio chunk (base64 string)
+ * @param {Function} onChunk - Callback for each audio chunk
  * @param {Function} onComplete - Callback when streaming is complete
  * @param {Function} onError - Callback for errors
- * @returns {Function} Cancel function to abort streaming
  */
-export function textToSpeechStream(text, onChunk, onComplete, onError) {
-    if (!apiKey) {
+export async function textToSpeechStream(text, onChunk, onComplete, onError) {
+    if (!client) {
         onError?.(new Error('ElevenLabs not configured'));
-        return () => { };
+        return;
     }
 
-    const wsUrl = `${ELEVENLABS_WS_URL}/${voiceId}/stream-input?model_id=eleven_multilingual_v2&xi-api-key=${apiKey}`;
-    const ws = new WebSocket(wsUrl);
-    let isCancelled = false;
-    let chunkIndex = 0;
-
-    ws.on('open', () => {
-        if (isCancelled) {
-            ws.close();
-            return;
-        }
-
-        // Send initial configuration
-        ws.send(JSON.stringify({
-            text: ' ',
-            voice_settings: {
-                stability: 0.5,
-                similarity_boost: 0.8,
-                style: 0.0,
-                use_speaker_boost: true
-            },
-            generation_config: {
-                chunk_length_schedule: [120, 160, 250, 290]
-            }
-        }));
-
-        // Send the actual text
-        ws.send(JSON.stringify({
+    try {
+        // Use streaming API
+        const audioStream = await client.textToSpeech.stream(voiceId, {
             text: text,
-            try_trigger_generation: true
-        }));
-
-        // Signal end of input
-        ws.send(JSON.stringify({
-            text: ''
-        }));
-    });
-
-    ws.on('message', (data) => {
-        if (isCancelled) return;
-
-        try {
-            const message = JSON.parse(data.toString());
-
-            if (message.audio) {
-                // Send chunk immediately to client
-                onChunk?.({
-                    audio: message.audio, // Already base64
-                    index: chunkIndex++,
-                    isFinal: false
-                });
+            modelId: 'eleven_multilingual_v2',
+            voiceSettings: {
+                stability: 0.5,
+                similarityBoost: 0.8,
+                style: 0.0,
+                useSpeakerBoost: true
             }
+        });
 
-            if (message.isFinal) {
-                onChunk?.({
-                    audio: null,
-                    index: chunkIndex,
-                    isFinal: true
-                });
-                ws.close();
-            }
-        } catch (e) {
-            // Binary audio data - convert to base64
-            if (Buffer.isBuffer(data)) {
-                onChunk?.({
-                    audio: data.toString('base64'),
-                    index: chunkIndex++,
-                    isFinal: false
-                });
-            }
-        }
-    });
+        let chunkIndex = 0;
+        const chunks = [];
 
-    ws.on('close', () => {
-        if (!isCancelled) {
-            onComplete?.();
+        // Collect chunks from async iterator
+        for await (const chunk of audioStream) {
+            chunks.push(chunk);
+            onChunk?.({
+                audio: Buffer.from(chunk).toString('base64'),
+                index: chunkIndex++,
+                isFinal: false
+            });
         }
-    });
 
-    ws.on('error', (error) => {
-        if (!isCancelled) {
-            onError?.(error);
-        }
-    });
+        // Signal final chunk
+        onChunk?.({
+            audio: null,
+            index: chunkIndex,
+            isFinal: true
+        });
 
-    // Timeout after 30 seconds
-    const timeout = setTimeout(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.close();
-            onError?.(new Error('TTS timeout'));
-        }
-    }, 30000);
-
-    // Return cancel function
-    return () => {
-        isCancelled = true;
-        clearTimeout(timeout);
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.close();
-        }
-    };
+        onComplete?.();
+    } catch (error) {
+        console.error('TTS streaming error:', error.message);
+        onError?.(error);
+    }
 }
 
 /**
- * Convert text to speech using WebSocket streaming (Promise-based)
- * @param {string} text - Text to convert
- * @returns {Promise<Buffer>} Audio buffer
- */
-export function textToSpeech(text) {
-    return new Promise((resolve, reject) => {
-        if (!apiKey) {
-            reject(new Error('ElevenLabs not configured'));
-            return;
-        }
-
-        const wsUrl = `${ELEVENLABS_WS_URL}/${voiceId}/stream-input?model_id=eleven_multilingual_v2&xi-api-key=${apiKey}`;
-        const ws = new WebSocket(wsUrl);
-
-        const audioChunks = [];
-
-        ws.on('open', () => {
-            ws.send(JSON.stringify({
-                text: ' ',
-                voice_settings: {
-                    stability: 0.5,
-                    similarity_boost: 0.8,
-                    style: 0.0,
-                    use_speaker_boost: true
-                },
-                generation_config: {
-                    chunk_length_schedule: [120, 160, 250, 290]
-                }
-            }));
-
-            ws.send(JSON.stringify({
-                text: text,
-                try_trigger_generation: true
-            }));
-
-            ws.send(JSON.stringify({
-                text: ''
-            }));
-        });
-
-        ws.on('message', (data) => {
-            try {
-                const message = JSON.parse(data.toString());
-
-                if (message.audio) {
-                    const audioBuffer = Buffer.from(message.audio, 'base64');
-                    audioChunks.push(audioBuffer);
-                }
-
-                if (message.isFinal) {
-                    ws.close();
-                }
-            } catch (e) {
-                audioChunks.push(data);
-            }
-        });
-
-        ws.on('close', () => {
-            if (audioChunks.length > 0) {
-                resolve(Buffer.concat(audioChunks));
-            } else {
-                reject(new Error('No audio generated'));
-            }
-        });
-
-        ws.on('error', (error) => {
-            reject(error);
-        });
-
-        setTimeout(() => {
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.close();
-                reject(new Error('TTS timeout'));
-            }
-        }, 30000);
-    });
-}
-
-/**
- * Convert text to speech using REST API (simpler, non-streaming)
+ * Convert text to speech (simple, non-streaming)
  * @param {string} text - Text to convert
  * @returns {Promise<Buffer>} Audio buffer
  */
 export async function textToSpeechSimple(text) {
-    if (!apiKey) {
+    if (!client) {
         throw new Error('ElevenLabs not configured');
     }
 
     try {
-        const response = await fetch(
-            `${ELEVENLABS_API_URL}/text-to-speech/${voiceId}`,
-            {
-                method: 'POST',
-                headers: {
-                    'Accept': 'audio/mpeg',
-                    'Content-Type': 'application/json',
-                    'xi-api-key': apiKey
-                },
-                body: JSON.stringify({
-                    text: text,
-                    model_id: 'eleven_multilingual_v2',
-                    voice_settings: {
-                        stability: 0.5,
-                        similarity_boost: 0.8,
-                        style: 0.0,
-                        use_speaker_boost: true
-                    }
-                })
+        const audioStream = await client.textToSpeech.convert(voiceId, {
+            text: text,
+            modelId: 'eleven_multilingual_v2',
+            voiceSettings: {
+                stability: 0.5,
+                similarityBoost: 0.8,
+                style: 0.0,
+                useSpeakerBoost: true
             }
-        );
+        });
 
-        if (!response.ok) {
-            throw new Error(`TTS API error: ${response.status}`);
+        // Collect all chunks into a buffer
+        const chunks = [];
+        for await (const chunk of audioStream) {
+            chunks.push(chunk);
         }
 
-        const arrayBuffer = await response.arrayBuffer();
-        return Buffer.from(arrayBuffer);
+        return Buffer.concat(chunks);
     } catch (error) {
         console.error('TTS error:', error.message);
         throw error;
@@ -316,7 +145,7 @@ export async function textToSpeechSimple(text) {
  * @returns {boolean}
  */
 export function isConfigured() {
-    return !!apiKey;
+    return !!client;
 }
 
 /**
@@ -324,21 +153,13 @@ export function isConfigured() {
  * @returns {Promise<Array>} List of available voices
  */
 export async function getVoices() {
-    if (!apiKey) {
+    if (!client) {
         return [];
     }
 
     try {
-        const response = await fetch(`${ELEVENLABS_API_URL}/voices`, {
-            headers: { 'xi-api-key': apiKey }
-        });
-
-        if (!response.ok) {
-            throw new Error(`API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        return data.voices || [];
+        const response = await client.voices.getAll();
+        return response.voices || [];
     } catch (error) {
         console.error('Get voices error:', error.message);
         return [];
