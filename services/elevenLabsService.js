@@ -1,5 +1,6 @@
 /**
- * IRIS Backend - Groq TTS Voice Service (Fixed)
+ * IRIS Backend - Groq TTS Voice Service
+ * Handles text-to-speech conversion using Groq API (replacing ElevenLabs)
  */
 
 const GROQ_TTS_URL = 'https://api.groq.com/openai/v1/audio/speech';
@@ -7,23 +8,20 @@ const GROQ_TTS_URL = 'https://api.groq.com/openai/v1/audio/speech';
 let apiKey = null;
 let voiceId = null;
 
-// الأصوات المدعومة رسمياً من Groq حالياً
+// Available Groq TTS voices
 const GROQ_VOICES = [
-    'austin', 'troy', 'daniel', 'hannah', 'diana', 'autumn'
+  'austin', 'troy', 'daniel', 'hannah', 'diana', 'autumn'
 ];
 
 /**
  * Initialize Groq TTS service
  */
-export function initElevenLabs() { // أبقينا الاسم للتوافق مع بقية النظام
+export function initElevenLabs() {
     apiKey = process.env.GROQ_API_KEY;
-    
-    // ✅ تصحيح 1: التأكد من أن الصوت الافتراضي مدعوم من القائمة الجديدة
-    const envVoice = process.env.GROQ_TTS_VOICE;
-    voiceId = GROQ_VOICES.includes(envVoice) ? envVoice : 'austin'; 
+    voiceId = process.env.GROQ_TTS_VOICE || 'Fritz-PlayAI'; // Default voice
 
     if (!apiKey) {
-        console.warn('⚠️ GROQ_API_KEY not set. Voice synthesis disabled.');
+        console.warn('⚠️  GROQ_API_KEY not set. Voice synthesis disabled.');
         return false;
     }
 
@@ -31,8 +29,20 @@ export function initElevenLabs() { // أبقينا الاسم للتوافق م�
     return true;
 }
 
-// ... (getSignedUrl كما هي)
+/**
+ * Get a signed URL (not used for Groq, kept for compatibility)
+ */
+export async function getSignedUrl() {
+    return { error: 'Signed URLs not supported with Groq TTS' };
+}
 
+/**
+ * Convert text to speech with streaming via callback
+ * @param {string} text - Text to convert
+ * @param {Function} onChunk - Callback for audio chunk
+ * @param {Function} onComplete - Callback when complete
+ * @param {Function} onError - Callback for errors
+ */
 export async function textToSpeechStream(text, onChunk, onComplete, onError) {
     if (!apiKey) {
         onError?.(new Error('Groq TTS not configured'));
@@ -49,33 +59,28 @@ export async function textToSpeechStream(text, onChunk, onComplete, onError) {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                // ✅ تصحيح 2: استخدام الموديل القياسي لتجنب "Terms Acceptance"
-                model: 'tts-1', 
+                model: 'canopylabs/orpheus-v1-english',
                 input: text,
-                voice: voiceId, // تأكد أنه من القائمة [austin, troy, etc.]
+                voice: voiceId,
                 response_format: 'wav'
             })
         });
 
         if (!response.ok) {
-            const errJson = await response.json(); // تغيير لـ JSON لقراءة رسالة الخطأ بوضوح
-            console.error('❌ Groq TTS error:', response.status, errJson);
-            
-            // محاولة التعافي التلقائي إذا كان الخطأ بسبب اسم الصوت
-            if (response.status === 400 && voiceId !== 'austin') {
-                console.warn('🔄 Retrying with fallback voice: austin');
-                voiceId = 'austin';
-                return textToSpeechStream(text, onChunk, onComplete, onError);
-            }
-
+            const errText = await response.text();
+            console.error('❌ Groq TTS error:', response.status, errText);
             onError?.(new Error(`Groq TTS error: ${response.status}`));
             return;
         }
 
+        // Get audio as buffer
         const arrayBuffer = await response.arrayBuffer();
         const audioBuffer = Buffer.from(arrayBuffer);
         const audioBase64 = audioBuffer.toString('base64');
 
+        console.log(`✅ Groq TTS: Generated ${Math.round(audioBuffer.length / 1024)}KB audio`);
+
+        // Send as single chunk
         onChunk?.({
             audio: audioBase64,
             index: 0,
@@ -89,4 +94,68 @@ export async function textToSpeechStream(text, onChunk, onComplete, onError) {
     }
 }
 
-// ... (بقية الدوال مع التأكد من تغيير الموديل لـ 'tts-1')
+/**
+ * Convert text to speech (simple, returns buffer)
+ * @param {string} text - Text to convert
+ * @returns {Promise<Buffer>} Audio buffer
+ */
+export async function textToSpeechSimple(text) {
+    if (!apiKey) {
+        throw new Error('Groq TTS not configured');
+    }
+
+    try {
+        const response = await fetch(GROQ_TTS_URL, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'canopylabs/orpheus-v1-english',
+                input: text,
+                voice: voiceId,
+                response_format: 'wav'
+            })
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Groq TTS error: ${response.status} - ${errText}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        return Buffer.from(arrayBuffer);
+    } catch (error) {
+        console.error('TTS error:', error.message);
+        throw error;
+    }
+}
+
+/**
+ * Convert text to speech (Promise-based, alias for textToSpeechSimple)
+ */
+export async function textToSpeech(text) {
+    return textToSpeechSimple(text);
+}
+
+/**
+ * Check if Groq TTS is properly configured
+ * @returns {boolean}
+ */
+export function isConfigured() {
+    return !!apiKey;
+}
+
+/**
+ * Get available voices
+ * @returns {Promise<Array>} List of available voices
+ */
+export async function getVoices() {
+    // Return static list of Groq TTS voices
+    return GROQ_VOICES.map(voice => ({
+        voice_id: voice,
+        name: voice.replace('-PlayAI', ''),
+        preview_url: null
+    }));
+}
