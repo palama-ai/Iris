@@ -10,7 +10,8 @@ let voiceId = null;
 
 // Available Groq TTS voices
 const GROQ_VOICES = [
-    'hannah'
+    'hannah',
+    'troy'
 ];
 
 /**
@@ -62,7 +63,7 @@ export async function textToSpeechStream(text, onChunk, onComplete, onError) {
                 model: 'canopylabs/orpheus-v1-english',
                 input: text,
                 voice: voiceId,
-                response_format: 'mp3'
+                response_format: 'wav'
             })
         });
 
