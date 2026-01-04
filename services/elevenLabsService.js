@@ -1,139 +1,149 @@
 /**
- * IRIS Backend - ElevenLabs Voice Service
- * Handles text-to-speech conversion using official ElevenLabs SDK
+ * IRIS Backend - Groq TTS Voice Service
+ * Handles text-to-speech conversion using Groq API (replacing ElevenLabs)
  */
 
-import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
+const GROQ_TTS_URL = 'https://api.groq.com/openai/v1/audio/speech';
 
-let client = null;
+let apiKey = null;
 let voiceId = null;
 
+// Available Groq TTS voices
+const GROQ_VOICES = [
+    'Arista-PlayAI',
+    'Atlas-PlayAI',
+    'Basil-PlayAI',
+    'Briggs-PlayAI',
+    'Calum-PlayAI',
+    'Celeste-PlayAI',
+    'Cheyenne-PlayAI',
+    'Chip-PlayAI',
+    'Cillian-PlayAI',
+    'Deedee-PlayAI',
+    'Fritz-PlayAI',
+    'Gail-PlayAI',
+    'Indigo-PlayAI',
+    'Mamaw-PlayAI',
+    'Mason-PlayAI',
+    'Mikail-PlayAI',
+    'Mitch-PlayAI',
+    'Quinn-PlayAI',
+    'Thunder-PlayAI'
+];
+
 /**
- * Initialize ElevenLabs service
+ * Initialize Groq TTS service
  */
 export function initElevenLabs() {
-    const apiKey = process.env.ELEVENLABS_API_KEY;
-    voiceId = process.env.ELEVENLABS_VOICE_ID;
+    apiKey = process.env.GROQ_API_KEY;
+    voiceId = process.env.GROQ_TTS_VOICE || 'Fritz-PlayAI'; // Default voice
 
     if (!apiKey) {
-        console.warn('⚠️  ELEVENLABS_API_KEY not set. Voice synthesis disabled.');
+        console.warn('⚠️  GROQ_API_KEY not set. Voice synthesis disabled.');
         return false;
     }
 
-    if (!voiceId) {
-        console.warn('⚠️  ELEVENLABS_VOICE_ID not set. Using default voice.');
-        voiceId = '21m00Tcm4TlvDq8ikWAM'; // Rachel - default voice
-    }
-
-    client = new ElevenLabsClient({ apiKey });
-    console.log('✅ ElevenLabs service initialized (Official SDK)');
+    console.log(`✅ Groq TTS service initialized (Voice: ${voiceId})`);
     return true;
 }
 
 /**
- * Get a signed URL for client-side WebSocket connection
- * @returns {Object} Signed URL and configuration
+ * Get a signed URL (not used for Groq, kept for compatibility)
  */
 export async function getSignedUrl() {
-    const agentId = process.env.ELEVENLABS_AGENT_ID;
-    if (!client || !agentId) {
-        return { error: 'ElevenLabs not configured' };
-    }
-
-    try {
-        const response = await client.convai.conversation.getSignedUrl({ agentId });
-        return {
-            signedUrl: response.signedUrl,
-            agentId: agentId
-        };
-    } catch (error) {
-        console.error('ElevenLabs signed URL error:', error.message);
-        return { error: error.message };
-    }
+    return { error: 'Signed URLs not supported with Groq TTS' };
 }
 
 /**
  * Convert text to speech with streaming via callback
  * @param {string} text - Text to convert
- * @param {Function} onChunk - Callback for each audio chunk
- * @param {Function} onComplete - Callback when streaming is complete
+ * @param {Function} onChunk - Callback for audio chunk
+ * @param {Function} onComplete - Callback when complete
  * @param {Function} onError - Callback for errors
  */
 export async function textToSpeechStream(text, onChunk, onComplete, onError) {
-    if (!client) {
-        onError?.(new Error('ElevenLabs not configured'));
+    if (!apiKey) {
+        onError?.(new Error('Groq TTS not configured'));
         return;
     }
 
     try {
-        // Use streaming API
-        const audioStream = await client.textToSpeech.stream(voiceId, {
-            text: text,
-            modelId: 'eleven_multilingual_v2',
-            voiceSettings: {
-                stability: 0.5,
-                similarityBoost: 0.8,
-                style: 0.0,
-                useSpeakerBoost: true
-            }
+        console.log(`🔊 Groq TTS: Converting "${text.substring(0, 50)}..." to speech`);
+
+        const response = await fetch(GROQ_TTS_URL, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'playai-tts',
+                input: text,
+                voice: voiceId,
+                response_format: 'mp3'
+            })
         });
 
-        let chunkIndex = 0;
-        const chunks = [];
-
-        // Collect chunks from async iterator
-        for await (const chunk of audioStream) {
-            chunks.push(chunk);
-            onChunk?.({
-                audio: Buffer.from(chunk).toString('base64'),
-                index: chunkIndex++,
-                isFinal: false
-            });
+        if (!response.ok) {
+            const errText = await response.text();
+            console.error('❌ Groq TTS error:', response.status, errText);
+            onError?.(new Error(`Groq TTS error: ${response.status}`));
+            return;
         }
 
-        // Signal final chunk
+        // Get audio as buffer
+        const arrayBuffer = await response.arrayBuffer();
+        const audioBuffer = Buffer.from(arrayBuffer);
+        const audioBase64 = audioBuffer.toString('base64');
+
+        console.log(`✅ Groq TTS: Generated ${Math.round(audioBuffer.length / 1024)}KB audio`);
+
+        // Send as single chunk
         onChunk?.({
-            audio: null,
-            index: chunkIndex,
+            audio: audioBase64,
+            index: 0,
             isFinal: true
         });
 
         onComplete?.();
     } catch (error) {
-        console.error('TTS streaming error:', error.message);
+        console.error('❌ Groq TTS error:', error.message);
         onError?.(error);
     }
 }
 
 /**
- * Convert text to speech (simple, non-streaming)
+ * Convert text to speech (simple, returns buffer)
  * @param {string} text - Text to convert
  * @returns {Promise<Buffer>} Audio buffer
  */
 export async function textToSpeechSimple(text) {
-    if (!client) {
-        throw new Error('ElevenLabs not configured');
+    if (!apiKey) {
+        throw new Error('Groq TTS not configured');
     }
 
     try {
-        const audioStream = await client.textToSpeech.convert(voiceId, {
-            text: text,
-            modelId: 'eleven_multilingual_v2',
-            voiceSettings: {
-                stability: 0.5,
-                similarityBoost: 0.8,
-                style: 0.0,
-                useSpeakerBoost: true
-            }
+        const response = await fetch(GROQ_TTS_URL, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'playai-tts',
+                input: text,
+                voice: voiceId,
+                response_format: 'mp3'
+            })
         });
 
-        // Collect all chunks into a buffer
-        const chunks = [];
-        for await (const chunk of audioStream) {
-            chunks.push(chunk);
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Groq TTS error: ${response.status} - ${errText}`);
         }
 
-        return Buffer.concat(chunks);
+        const arrayBuffer = await response.arrayBuffer();
+        return Buffer.from(arrayBuffer);
     } catch (error) {
         console.error('TTS error:', error.message);
         throw error;
@@ -141,11 +151,18 @@ export async function textToSpeechSimple(text) {
 }
 
 /**
- * Check if ElevenLabs is properly configured
+ * Convert text to speech (Promise-based, alias for textToSpeechSimple)
+ */
+export async function textToSpeech(text) {
+    return textToSpeechSimple(text);
+}
+
+/**
+ * Check if Groq TTS is properly configured
  * @returns {boolean}
  */
 export function isConfigured() {
-    return !!client;
+    return !!apiKey;
 }
 
 /**
@@ -153,15 +170,10 @@ export function isConfigured() {
  * @returns {Promise<Array>} List of available voices
  */
 export async function getVoices() {
-    if (!client) {
-        return [];
-    }
-
-    try {
-        const response = await client.voices.getAll();
-        return response.voices || [];
-    } catch (error) {
-        console.error('Get voices error:', error.message);
-        return [];
-    }
+    // Return static list of Groq TTS voices
+    return GROQ_VOICES.map(voice => ({
+        voice_id: voice,
+        name: voice.replace('-PlayAI', ''),
+        preview_url: null
+    }));
 }
