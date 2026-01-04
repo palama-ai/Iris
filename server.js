@@ -548,7 +548,7 @@ app.get('/api/learning/failure-patterns', async (req, res) => {
 });
 
 // ============================================
-// AI Reasoning with Groq Qwen3-32B
+// AI Reasoning with Groq gpt-oss-120b
 // ============================================
 
 app.post('/api/reasoning/analyze', async (req, res) => {
@@ -563,7 +563,7 @@ app.post('/api/reasoning/analyze', async (req, res) => {
         return res.status(500).json({ error: 'GROQ_API_KEY not configured' });
     }
 
-    console.log('🧠 AI Reasoning request using Qwen3-32B:', prompt.substring(0, 100) + '...');
+    console.log('🧠 AI Reasoning request using gpt-oss-120b:', prompt.substring(0, 100) + '...');
 
     try {
         const systemPrompt = `أنت IRIS، وكيل ذكاء اصطناعي فائق القدرة للأتمتة البرمجية.
@@ -596,7 +596,7 @@ app.post('/api/reasoning/analyze', async (req, res) => {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                model: 'qwen/qwen3-32b',
+                model: 'openai/gpt-oss-120b',
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: prompt }
