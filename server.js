@@ -966,6 +966,73 @@ io.on('connection', (socket) => {
     });
 
     // ----------------------------------------
+    // Wake Word Detection
+    // ----------------------------------------
+
+    socket.on('wakeword:check', async (data) => {
+        try {
+            const { audio, format } = data;
+            if (!audio) return;
+
+            const groqKey = process.env.GROQ_API_KEY;
+            if (!groqKey) {
+                console.warn('⚠️ Groq API key not configured for wake word');
+                return;
+            }
+
+            // Convert base64 to buffer
+            const audioBuffer = Buffer.from(audio, 'base64');
+            const audioBlob = new Blob([audioBuffer], { type: `audio/${format || 'wav'}` });
+
+            // Create form data for Whisper
+            const formData = new FormData();
+            formData.append('file', audioBlob, `wakeword.${format || 'wav'}`);
+            formData.append('model', 'whisper-large-v3');
+            formData.append('language', 'en');
+
+            const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${groqKey}`
+                },
+                body: formData
+            });
+
+            if (!response.ok) {
+                return; // Silent fail for wake word
+            }
+
+            const result = await response.json();
+            const text = result.text?.toLowerCase() || '';
+
+            // Check for wake word
+            const wakeWords = ['iris', 'hey iris', 'hi iris', 'ok iris', 'hello iris'];
+            const detected = wakeWords.some(ww => text.includes(ww));
+
+            if (detected) {
+                console.log(`🎤 Wake word detected: "${result.text}"`);
+                socket.emit('wakeword:detected', { text: result.text });
+            }
+        } catch (error) {
+            // Silent fail for wake word detection
+            console.error('Wake word check error:', error.message);
+        }
+    });
+
+    // ----------------------------------------
+    // TTS Request (on-demand)
+    // ----------------------------------------
+
+    socket.on('tts:request', async (data) => {
+        const { text } = data;
+        if (!text) return;
+
+        if (isElevenLabsConfigured()) {
+            streamVoiceToSocket(socket, text);
+        }
+    });
+
+    // ----------------------------------------
     // History Management
     // ----------------------------------------
 
