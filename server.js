@@ -972,7 +972,12 @@ io.on('connection', (socket) => {
     socket.on('wakeword:check', async (data) => {
         try {
             const { audio, format } = data;
-            if (!audio) return;
+            if (!audio) {
+                console.log('⚠️ Wake word check: No audio data received');
+                return;
+            }
+
+            console.log(`🎤 Wake word check: Received ${Math.round(audio.length / 1024)}KB audio`);
 
             const groqKey = process.env.GROQ_API_KEY;
             if (!groqKey) {
@@ -990,6 +995,8 @@ io.on('connection', (socket) => {
             formData.append('model', 'whisper-large-v3');
             formData.append('language', 'en');
 
+            console.log('🔄 Sending to Groq Whisper for transcription...');
+
             const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
                 method: 'POST',
                 headers: {
@@ -999,23 +1006,27 @@ io.on('connection', (socket) => {
             });
 
             if (!response.ok) {
-                return; // Silent fail for wake word
+                const errText = await response.text();
+                console.error(`❌ Whisper error ${response.status}: ${errText}`);
+                return;
             }
 
             const result = await response.json();
             const text = result.text?.toLowerCase() || '';
+            console.log(`📝 Transcribed: "${result.text}"`);
 
             // Check for wake word
             const wakeWords = ['iris', 'hey iris', 'hi iris', 'ok iris', 'hello iris'];
             const detected = wakeWords.some(ww => text.includes(ww));
 
             if (detected) {
-                console.log(`🎤 Wake word detected: "${result.text}"`);
+                console.log(`✅ Wake word detected: "${result.text}"`);
                 socket.emit('wakeword:detected', { text: result.text });
+            } else if (text.trim()) {
+                console.log(`ℹ️ No wake word in: "${result.text}"`);
             }
         } catch (error) {
-            // Silent fail for wake word detection
-            console.error('Wake word check error:', error.message);
+            console.error('❌ Wake word check error:', error.message);
         }
     });
 
